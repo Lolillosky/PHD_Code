@@ -253,7 +253,7 @@ def build_dense_model(input_shape, num_hidden_layers, num_neurons_hidden_layers,
 
   dense_model = tf.keras.Sequential()
 
-  if num_hidden_layers>1:
+  if num_hidden_layers>0:
 
     dense_model.add(tf.keras.layers.Dense(num_neurons_hidden_layers, input_shape=(input_shape,), activation = hidden_layer_activation))
   
