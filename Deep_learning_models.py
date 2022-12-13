@@ -1,5 +1,6 @@
 import tensorflow as tf
 import pickle
+import numpy as np
 
 
 class DiffLearning_old(tf.keras.Model):
@@ -237,5 +238,31 @@ class DiffLearning(tf.keras.Model):
     
     return tf.concat((y,adjoints), axis = -1)
 
+
+def build_dense_model(input_shape, num_hidden_layers, num_neurons_hidden_layers, hidden_layer_activation, output_layer_activation):
+  '''
+  Builds a tf dense model.
+  Inputs:
+  -------
+  * input_shape (int): dimension of input
+  * num_hidden_layers (int): number of hidden layers.
+  * num_neurons_hidden_layers (int): number of neurons per hidden layer.
+  * hidden_layer_activation (str of tf.keras.activation): activation function for hidden layers.
+  * output_layer_activation (str of tf.keras.activation): activation function for output layers.
+  '''
+
+  dense_model = tf.keras.Sequential()
+
+  if num_hidden_layers>1:
+
+    dense_model.add(tf.keras.layers.Dense(num_neurons_hidden_layers, input_shape=(input_shape,), activation = hidden_layer_activation))
+  
+    for i in range(num_hidden_layers-1):
+    
+      dense_model.add(tf.keras.layers.Dense(num_neurons_hidden_layers, activation = hidden_layer_activation))
+  
+  dense_model.add(tf.keras.layers.Dense(1, activation = output_layer_activation))
+
+  return dense_model
 
 
