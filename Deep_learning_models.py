@@ -102,6 +102,12 @@ class DiffLearning_old(tf.keras.Model):
 
 class DiffLearningLoss(tf.keras.losses.Loss):
 
+  """ def __init__(self, alpha, deltas_L2_norm, name = 'DiffLearningLoss'):
+
+    super().__init__(name = name)
+    self.alpha = alpha
+    self.deltas_L2_norm = deltas_L2_norm
+ """
   def __init__(self, alpha, deltas_L2_norm, **kwargs):
 
     super().__init__(**kwargs)
@@ -111,9 +117,15 @@ class DiffLearningLoss(tf.keras.losses.Loss):
   def get_config(self):
 
     base_config = super().get_config()
-    return {**base_config, 'alpha' : self.alpha, 'deltas_L2_norm': self.deltas_L2_norm}
+    base_config.update({'alpha': self.alpha, 'deltas_L2_norm': self.deltas_L2_norm})
+    return base_config
+    #return {**base_config, 'alpha' : self.alpha, 'deltas_L2_norm': self.deltas_L2_norm}
 
+  @tf.function
   def call(self, y_true, y_pred):
+
+    #y_true = tf.convert_to_tensor(y_true,  dtype=tf.float64)
+    #y_pred = tf.convert_to_tensor(y_pred, dtype=tf.float64)
 
     value_true = y_true[:,0]
     value_pred = y_pred[:,0]
@@ -121,9 +133,35 @@ class DiffLearningLoss(tf.keras.losses.Loss):
     sens_true = y_true[:,1:]
     sens_pred = y_pred[:,1:]
 
-    # return tf.reduce_mean((value_true - value_pred) ** 2) + self.alpha * tf.reduce_sum((sens_true - sens_pred) ** 2) / (y_true.shape[0] * (y_true.shape[1]-1))
+    # TODO: Add small number to self.deltas_L2_norm
+    return tf.reduce_mean(tf.square(value_true - value_pred)) + self.alpha * tf.reduce_mean((tf.square(sens_true - sens_pred))/(self.deltas_L2_norm)) 
 
-    return tf.reduce_mean((value_true - value_pred) ** 2) + self.alpha * tf.reduce_mean(((sens_true - sens_pred) ** 2)/self.deltas_L2_norm) 
+
+class DiffLearningEarlySpotLoss(tf.keras.metrics.Metric):
+
+
+  def __init__(self, y_mu, y_sigma, **kwargs):
+
+    super().__init__(**kwargs)
+    self.y_mu = y_mu
+    self.y_sigma = y_sigma
+
+  
+  @tf.function
+  def call(self, y_true, y_pred):
+
+    #y_true = tf.convert_to_tensor(y_true,  dtype=tf.float64)
+    #y_pred = tf.convert_to_tensor(y_pred, dtype=tf.float64)
+
+    value_true = y_true[:,0]
+    value_pred = y_pred[:,0]
+
+    value_true = self.y_mu + self.y_sigma * value_true
+    value_pred = self.y_mu + self.y_sigma * value_pred
+    
+    
+    return tf.keras.losses.mean_squared_error(value_true,value_pred)
+
 
 class Diff_learning_scaler:
 
@@ -132,7 +170,7 @@ class Diff_learning_scaler:
     self.diff_learning_model = diff_learning_model
     self.alpha = alpha
 
-  def normalize_data(self, X, y, dydX):
+  def compute_normalization_params(self, X, y, dydX):
 
     self.X_mu = np.mean(X, axis = 0)
     self.X_sigma = np.std(X, axis = 0)
@@ -140,26 +178,60 @@ class Diff_learning_scaler:
     self.y_mu = np.mean(y)
     self.y_sigma = np.std(y)
 
+    dydX_scaled = dydX * self.X_sigma / self.y_sigma  
+
+    self.dydX_scaled_L2_norm = np.mean(dydX_scaled*dydX_scaled, axis = 0)
+
+
+  def normalize_data(self, X, y, dydX):
+
+    
     X_scaled = (X - self.X_mu) / self.X_sigma 
     y_scaled = (y - self.y_mu) / self.y_sigma 
     
     dydX_scaled = dydX * self.X_sigma / self.y_sigma  
 
-    self.dydX_scaled_L2_norm = np.mean(dydX_scaled*dydX_scaled, axis = 0)
-
     self.loss = DiffLearningLoss(self.alpha, self.dydX_scaled_L2_norm)
 
     return {'X_scaled': X_scaled, 'y_scaled': y_scaled, 'dydX_scaled': dydX_scaled}
 
-  def fit(self, X, y, dydX, batch_size= 32, epochs= 20):
-    
-    scaled_data = self.normalize_data(X, y, dydX)
+  def fit(self, X, y, dydX, batch_size= 32, epochs= 20, validation_data = None):
 
-    self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss)
+    '''
+    Inputs:
+    -------
+    validation_data: dict(keys = {X_val, y_val, dydX_val, patience})
+    '''
+
+    self.compute_normalization_params(X, y, dydX)
+
+    scaled_data = self.normalize_data(X, y, dydX)
 
     y_to_model = np.concatenate((scaled_data['y_scaled'].reshape(-1,1), scaled_data['dydX_scaled']), axis =1)  
 
-    return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False)
+    
+    if validation_data is not None:
+
+      X_val = validation_data['X_val']
+      y_val = validation_data['y_val']
+      dydX_val = validation_data['dydX_val']
+      
+      scaled_data_val = self.normalize_data(X_val, y_val, dydX_val)
+      y_to_model_val = np.concatenate((scaled_data_val['y_scaled'].reshape(-1,1), scaled_data_val['dydX_scaled']), axis =1)  
+
+      self.loss_val = DiffLearningEarlySpotLoss(y_mu = self.y_mu, y_sigma = self.y_sigma)
+
+      early_stop = tf.keras.callbacks.EarlyStopping(monitor=self.loss_val, patience=validation_data['patience'], restore_best_weights=True, mode="min")
+
+      self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss, metrics = [self.loss_val])
+
+      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=[early_stop])
+
+    else:
+
+      self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss)
+
+      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False)
 
   def predict(self, X, batch_size = 32):
 
@@ -191,6 +263,9 @@ class Diff_learning_scaler:
 
     loss = DiffLearningLoss(alpha= params['alpha'],deltas_L2_norm=  params['dydX_scaled_L2_norm'])
     
+    #diff_learning_model = tf.keras.models.load_model(PATH + 'model', 
+    #    custom_objects= {'DiffLearningLoss': loss})
+
     diff_learning_model = tf.keras.models.load_model(PATH + 'model', 
         custom_objects= {'DiffLearningLoss': loss})
 
@@ -240,20 +315,10 @@ class DiffLearning(tf.keras.Model):
 
 
 def build_dense_model(input_shape, num_hidden_layers, num_neurons_hidden_layers, hidden_layer_activation, output_layer_activation):
-  '''
-  Builds a tf dense model.
-  Inputs:
-  -------
-  * input_shape (int): dimension of input
-  * num_hidden_layers (int): number of hidden layers.
-  * num_neurons_hidden_layers (int): number of neurons per hidden layer.
-  * hidden_layer_activation (str of tf.keras.activation): activation function for hidden layers.
-  * output_layer_activation (str of tf.keras.activation): activation function for output layers.
-  '''
 
   dense_model = tf.keras.Sequential()
 
-  if num_hidden_layers>0:
+  if num_hidden_layers>1:
 
     dense_model.add(tf.keras.layers.Dense(num_neurons_hidden_layers, input_shape=(input_shape,), activation = hidden_layer_activation))
   
@@ -264,5 +329,7 @@ def build_dense_model(input_shape, num_hidden_layers, num_neurons_hidden_layers,
   dense_model.add(tf.keras.layers.Dense(1, activation = output_layer_activation))
 
   return dense_model
+
+
 
 
