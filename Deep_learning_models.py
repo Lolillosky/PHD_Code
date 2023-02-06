@@ -114,14 +114,18 @@ class DiffLearningLoss(tf.keras.losses.Loss):
     self.alpha = alpha
     self.deltas_L2_norm = deltas_L2_norm
 
-  def get_config(self):
+#  def get_config(self):
 
-    base_config = super().get_config()
-    base_config.update({'alpha': self.alpha, 'deltas_L2_norm': self.deltas_L2_norm})
-    return base_config
-    #return {**base_config, 'alpha' : self.alpha, 'deltas_L2_norm': self.deltas_L2_norm}
+#    base_config = super().get_config()
+#    base_config.update({'alpha': self.alpha, 'deltas_L2_norm': self.deltas_L2_norm})
+#    return base_config
+#    #return {**base_config, 'alpha' : self.alpha, 'deltas_L2_norm': self.deltas_L2_norm}
 
-  @tf.function
+#  @classmethod
+#  def from_config(cls, config):
+#      return cls(**config)
+
+#  @tf.function
   def call(self, y_true, y_pred):
 
     #y_true = tf.convert_to_tensor(y_true,  dtype=tf.float64)
@@ -146,12 +150,10 @@ class DiffLearningEarlySpotLoss(tf.keras.metrics.Metric):
     self.y_mu = y_mu
     self.y_sigma = y_sigma
 
-  
-  @tf.function
-  def call(self, y_true, y_pred):
+    self.mean = self.add_weight(name='mean',initializer='zeros')
+    self.count = self.add_weight(name='count',initializer='zeros')
 
-    #y_true = tf.convert_to_tensor(y_true,  dtype=tf.float64)
-    #y_pred = tf.convert_to_tensor(y_pred, dtype=tf.float64)
+  def update_state(self, y_true, y_pred, sample_weight=None):
 
     value_true = y_true[:,0]
     value_pred = y_pred[:,0]
@@ -159,10 +161,26 @@ class DiffLearningEarlySpotLoss(tf.keras.metrics.Metric):
     value_true = self.y_mu + self.y_sigma * value_true
     value_pred = self.y_mu + self.y_sigma * value_pred
     
+    self.mean.assign_add(tf.math.reduce_sum(tf.math.square(value_pred - value_true)))
+    self.count.assign_add(tf.cast(tf.shape(y_true)[0], tf.keras.backend.floatx()))
+
+  def result(self):
+    return self.mean / self.count
     
-    return tf.keras.losses.mean_squared_error(value_true,value_pred)
+  def reset_state(self):
+    self.mean.assign(0.)
+    self.count.assign(0.)
 
+#  def get_config(self):
 
+#    base_config = super().get_config()
+#    base_config.update({'y_mu': self.y_mu, 'y_sigma': self.y_sigma})
+
+#  @classmethod
+#  def from_config(cls, config):
+#      return cls(**config)
+
+  
 class Diff_learning_scaler:
 
   def __init__(self, diff_learning_model, alpha = 1.0):
@@ -191,8 +209,6 @@ class Diff_learning_scaler:
     
     dydX_scaled = dydX * self.X_sigma / self.y_sigma  
 
-    self.loss = DiffLearningLoss(self.alpha, self.dydX_scaled_L2_norm)
-
     return {'X_scaled': X_scaled, 'y_scaled': y_scaled, 'dydX_scaled': dydX_scaled}
 
   def fit(self, X, y, dydX, batch_size= 32, epochs= 20, validation_data = None):
@@ -204,6 +220,8 @@ class Diff_learning_scaler:
     '''
 
     self.compute_normalization_params(X, y, dydX)
+
+    self.loss = DiffLearningLoss(self.alpha, self.dydX_scaled_L2_norm)
 
     scaled_data = self.normalize_data(X, y, dydX)
 
@@ -219,13 +237,16 @@ class Diff_learning_scaler:
       scaled_data_val = self.normalize_data(X_val, y_val, dydX_val)
       y_to_model_val = np.concatenate((scaled_data_val['y_scaled'].reshape(-1,1), scaled_data_val['dydX_scaled']), axis =1)  
 
-      self.loss_val = DiffLearningEarlySpotLoss(y_mu = self.y_mu, y_sigma = self.y_sigma)
+      loss_val = DiffLearningEarlySpotLoss(y_mu = self.y_mu, y_sigma = self.y_sigma, name = 'Myval_Loss')
 
-      early_stop = tf.keras.callbacks.EarlyStopping(monitor=self.loss_val, patience=validation_data['patience'], restore_best_weights=True, mode="min")
+      early_stop = tf.keras.callbacks.EarlyStopping(monitor="val_Myval_Loss", patience=validation_data['patience'],
+                restore_best_weights=True, mode="min")
 
-      self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss, metrics = [self.loss_val])
+  
+      self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss, metrics = [loss_val])
 
-      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=[early_stop])
+      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=[early_stop],
+                validation_data = (scaled_data_val['X_scaled'], y_to_model_val))
 
     else:
 
@@ -261,13 +282,14 @@ class Diff_learning_scaler:
     with open(PATH + 'params.pkl', 'rb') as f:
       params = pickle.load(f)
 
-    loss = DiffLearningLoss(alpha= params['alpha'],deltas_L2_norm=  params['dydX_scaled_L2_norm'])
-    
     #diff_learning_model = tf.keras.models.load_model(PATH + 'model', 
     #    custom_objects= {'DiffLearningLoss': loss})
 
-    diff_learning_model = tf.keras.models.load_model(PATH + 'model', 
-        custom_objects= {'DiffLearningLoss': loss})
+    #diff_learning_model = tf.keras.models.load_model(PATH + 'model', 
+    #    custom_objects= {'DiffLearningLoss': DiffLearningLoss(alpha= params['alpha'],deltas_L2_norm=  params['dydX_scaled_L2_norm']), 
+    #    'DiffLearningEarlySpotLoss': DiffLearningEarlySpotLoss(y_mu=params['y_mu'], y_sigma = params['y_sigma'])})
+    
+    diff_learning_model = tf.keras.models.load_model(PATH + 'model',compile=False)
 
     model = Diff_learning_scaler(diff_learning_model, alpha= params['alpha'])
 
