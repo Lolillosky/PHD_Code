@@ -114,18 +114,18 @@ class DiffLearningLoss(tf.keras.losses.Loss):
     self.alpha = alpha
     self.deltas_L2_norm = deltas_L2_norm
 
-#  def get_config(self):
+  def get_config(self):
 
-#    base_config = super().get_config()
-#    base_config.update({'alpha': self.alpha, 'deltas_L2_norm': self.deltas_L2_norm})
-#    return base_config
-#    #return {**base_config, 'alpha' : self.alpha, 'deltas_L2_norm': self.deltas_L2_norm}
+    base_config = super().get_config()
+    base_config.update({'alpha': self.alpha, 'deltas_L2_norm': self.deltas_L2_norm})
+    return base_config
 
-#  @classmethod
-#  def from_config(cls, config):
-#      return cls(**config)
 
-#  @tf.function
+  @classmethod
+  def from_config(cls, config):
+      return cls(**config)
+
+  @tf.function
   def call(self, y_true, y_pred):
 
     #y_true = tf.convert_to_tensor(y_true,  dtype=tf.float64)
@@ -171,14 +171,21 @@ class DiffLearningEarlySpotLoss(tf.keras.metrics.Metric):
     self.mean.assign(0.)
     self.count.assign(0.)
 
-#  def get_config(self):
+  def get_config(self):
 
-#    base_config = super().get_config()
-#    base_config.update({'y_mu': self.y_mu, 'y_sigma': self.y_sigma})
+    base_config = super().get_config()
+    base_config.update({'y_mu': self.y_mu, 'y_sigma': self.y_sigma})
 
-#  @classmethod
-#  def from_config(cls, config):
-#      return cls(**config)
+    return base_config
+
+  @classmethod
+  def from_config(cls, config):
+      return cls(**config)
+  
+class EpochCounterCallback(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        # Increment the number of epochs parameter of the model
+        self.model.num_epochs += 1
 
   
 class Diff_learning_scaler:
@@ -227,6 +234,7 @@ class Diff_learning_scaler:
 
     y_to_model = np.concatenate((scaled_data['y_scaled'].reshape(-1,1), scaled_data['dydX_scaled']), axis =1)  
 
+    epoch_counter = EpochCounterCallback()
     
     if validation_data is not None:
 
@@ -245,14 +253,14 @@ class Diff_learning_scaler:
   
       self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss, metrics = [loss_val])
 
-      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=[early_stop],
+      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=[early_stop, epoch_counter],
                 validation_data = (scaled_data_val['X_scaled'], y_to_model_val))
 
     else:
 
       self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss)
 
-      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False)
+      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=[epoch_counter])
 
   def predict(self, X, batch_size = 32):
 
@@ -285,11 +293,11 @@ class Diff_learning_scaler:
     #diff_learning_model = tf.keras.models.load_model(PATH + 'model', 
     #    custom_objects= {'DiffLearningLoss': loss})
 
-    #diff_learning_model = tf.keras.models.load_model(PATH + 'model', 
-    #    custom_objects= {'DiffLearningLoss': DiffLearningLoss(alpha= params['alpha'],deltas_L2_norm=  params['dydX_scaled_L2_norm']), 
-    #    'DiffLearningEarlySpotLoss': DiffLearningEarlySpotLoss(y_mu=params['y_mu'], y_sigma = params['y_sigma'])})
+    diff_learning_model = tf.keras.models.load_model(PATH + 'model', 
+        custom_objects= {'DiffLearningLoss': DiffLearningLoss(alpha= params['alpha'],deltas_L2_norm=  params['dydX_scaled_L2_norm']), 
+        'DiffLearningEarlySpotLoss': DiffLearningEarlySpotLoss(y_mu=params['y_mu'], y_sigma = params['y_sigma'])})
     
-    diff_learning_model = tf.keras.models.load_model(PATH + 'model',compile=False)
+    #diff_learning_model = tf.keras.models.load_model(PATH + 'model',compile=False)
 
     model = Diff_learning_scaler(diff_learning_model, alpha= params['alpha'])
 
@@ -304,7 +312,7 @@ class Diff_learning_scaler:
 
 class DiffLearning(tf.keras.Model):
 
-  def __init__(self, model, **kargs):
+  def __init__(self, model, num_epochs=0, **kargs):
 
     '''
     Implements differential learning algorithm.
@@ -316,6 +324,7 @@ class DiffLearning(tf.keras.Model):
     super().__init__(**kargs)
 
     self.model = model 
+    self._num_epochs = num_epochs
     
     
   def call(self, X):
@@ -334,7 +343,28 @@ class DiffLearning(tf.keras.Model):
 
     
     return tf.concat((y,adjoints), axis = -1)
+  
+  def get_config(self):
+        # Add the num_epochs parameter to the model configuration
+        config = super().get_config()
+        config.update({'num_epochs': self._num_epochs})
+        return config
 
+  @classmethod
+  def from_config(cls, config):
+    # Create a new model instance from the given configuration
+    return cls(num_epochs=config['num_epochs'])
+  
+  @property
+  def num_epochs(self):
+    # Define a getter method to retrieve the num_epochs value from the configuration dictionary
+    return self._num_epochs
+
+  @num_epochs.setter
+  def num_epochs(self, value):
+    # Define a setter method to set the num_epochs value
+    self._num_epochs = value
+  
 
 def build_dense_model(input_shape, num_hidden_layers, num_neurons_hidden_layers, hidden_layer_activation, output_layer_activation):
 
