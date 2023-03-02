@@ -8,16 +8,24 @@ def delete_content_of_folder(folder):
     ------
     folder (str): path of folder
     '''
-  
-    for filename in os.listdir(folder):
-        file_path = os.path.join(folder, filename)
-        try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
-        except Exception as e:
-            print('Failed to delete %s. Reason: %s' % (file_path, e))
+    if os.path.exists(folder):
+        confirm = input(f"The folder '{folder}' exists. Do you want to delete its contents? (y/n)").lower()
+        if confirm == "y":
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
+                try:
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)
+                    elif os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                except Exception as e:
+                    print('Failed to delete %s. Reason: %s' % (file_path, e))
+            print(f"The contents of the folder '{folder}' have been deleted.")
+        else:
+            print(f"The contents of the folder '{folder}' were not deleted.")
+    else:
+        print(f"The folder '{folder}' does not exist.")
+
 
 
 def plot_schocks(number_risk_factors, schocks_back, schocks_front, risk_factor_names, bins):
