@@ -24,7 +24,9 @@ def delete_content_of_folder(folder):
         else:
             print(f"The contents of the folder '{folder}' were not deleted.")
     else:
-        print(f"The folder '{folder}' does not exist.")
+        print(f"The folder '{folder}' does not exist, but will be created.")
+        os.mkdir(folder)
+
 
 
 
