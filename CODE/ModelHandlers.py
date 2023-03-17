@@ -9,6 +9,7 @@ from sklearn.metrics import mean_squared_error
 from sklearn.metrics import r2_score
 from scipy.stats import spearmanr
 from scipy.stats import ks_2samp 
+import matplotlib.pyplot as plt
 
 
 def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, sim_scenarios_train, payoff_train, sens_train, epochs ,batch_size, valid_data = None):
@@ -67,7 +68,8 @@ def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, sim_sc
 
 
 
-def load_set_of_models(PATH_MODELS, alphas, cells_layer, num_hidden_layer, sim_scenarios_train, payoff_train, sim_scenarios_cv, payoff_cv, closed_formula_train, closed_formula_train_cv):
+def load_set_of_models_and_compute_metrics(PATH_MODELS, alphas, cells_layer, num_hidden_layers, sim_scenarios_train, payoff_train, sim_scenarios_cv, payoff_cv, 
+                       closed_formula_train, closed_formula_train_cv, test_scenarios_and_closed_formula):
     """
     Loads a set of models and computes various evaluation metrics for each model.
     
@@ -83,6 +85,10 @@ def load_set_of_models(PATH_MODELS, alphas, cells_layer, num_hidden_layer, sim_s
     * payoff_cv (numpy.ndarray): An array of payoff values corresponding to the simulated scenarios used for cross-validation.
     * closed_formula_train (numpy.ndarray): An array of closed-formula prices corresponding to the simulated scenarios used for training.
     * closed_formula_train_cv (numpy.ndarray): An array of closed-formula prices corresponding to the simulated scenarios used for cross-validation.
+    * test_scenarios_and_closed_formula list(dict): list of dictionaries containing historical scenarios, their closed form formulas and their names. First element is base scenario. Keys:
+        - 'scenario_name' (str)
+        - 'scenario' (numpy.ndarray): An array of simulated scenarios used for cross-validation.
+        - 'closed_formula' (numpy.ndarray): An array of the closed form formula.
     
     Returns:
     ________
@@ -90,8 +96,12 @@ def load_set_of_models(PATH_MODELS, alphas, cells_layer, num_hidden_layer, sim_s
     """
     models = {}
 
+
+    # We get closed form formula from base scenario. Notice that scenario 0 represents base scenario.
+    closed_formula_base = test_scenarios_and_closed_formula[0]['closed_formula']
+
     # Iterate over all combinations of hyperparameters
-    for a, c, n in product(alphas, cells_layer, num_hidden_layer):
+    for a, c, n in product(alphas, cells_layer, num_hidden_layers):
 
         # Construct the name of the model based on the hyperparameters
         model_name = 'alpha' + '_' + str(a) + '_cells_' + str(c) + '_hidden_' + str(n) 
@@ -105,6 +115,9 @@ def load_set_of_models(PATH_MODELS, alphas, cells_layer, num_hidden_layer, sim_s
         # Load the current model
         model = Deep_learning_models.Diff_learning_scaler.open(path)
 
+        # We calculate the estimate for the base scenario
+        pred_base = model.predict(test_scenarios_and_closed_formula[0]['scenario'], batch_size = 1)['y']
+
         # Compute the mean squared error between the predicted payoffs and the actual payoffs for the training data
         y_pred_train = model.predict(sim_scenarios_train, batch_size = len(sim_scenarios_train))['y']
         mse_train = mean_squared_error(y_pred_train, payoff_train)
@@ -113,13 +126,15 @@ def load_set_of_models(PATH_MODELS, alphas, cells_layer, num_hidden_layer, sim_s
         y_pred_cv = model.predict(sim_scenarios_cv, batch_size = len(sim_scenarios_cv))['y']
         mse_cv = mean_squared_error(y_pred_cv, payoff_cv)
 
+        
+
         # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for the training data
-        spearman_train = spearmanr(y_pred_train, closed_formula_train)
-        ks_train = ks_2samp(y_pred_train, closed_formula_train)
+        spearman_train = spearmanr(y_pred_train - pred_base, closed_formula_train - closed_formula_base)
+        ks_train = ks_2samp(y_pred_train - pred_base, closed_formula_train - closed_formula_base)
 
         # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for the cross-validation data
-        spearman_cv = spearmanr(y_pred_cv, closed_formula_train_cv)
-        ks_cv = ks_2samp(y_pred_cv, closed_formula_train_cv)
+        spearman_cv = spearmanr(y_pred_cv - pred_base, closed_formula_train_cv - closed_formula_base)
+        ks_cv = ks_2samp(y_pred_cv - pred_base, closed_formula_train_cv - closed_formula_base)
 
         # Construct a dictionary containing the results for the current model
         results_dict = {}
@@ -133,12 +148,174 @@ def load_set_of_models(PATH_MODELS, alphas, cells_layer, num_hidden_layer, sim_s
         results_dict['spearman_cv'] = spearman_cv
         results_dict['ks_train'] = ks_train
         results_dict['ks_cv'] = ks_cv
-
+        
         # Add the results for the current model to the dictionary of all models
         models[(a,n,c)] = results_dict
+        
+        for i in range(1,len(test_scenarios_and_closed_formula)):
+            # Predict model for historical scenarios
+            y_pred_test = model.predict(test_scenarios_and_closed_formula[i]['scenario'], batch_size = len(test_scenarios_and_closed_formula[i]['scenario']))['y']
 
+
+            # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for historical scenarios
+            spearman_test = spearmanr(y_pred_test - pred_base, test_scenarios_and_closed_formula[i]['closed_formula'] - closed_formula_base)
+            ks_hist_test = ks_2samp(y_pred_test - pred_base, test_scenarios_and_closed_formula[i]['closed_formula'] - closed_formula_base)
+
+            results_dict['spearman_' + test_scenarios_and_closed_formula[i]['scenario_name']] = spearman_test
+            results_dict['ks_' + test_scenarios_and_closed_formula[i]['scenario_name']] = ks_hist_test
+
+                    
         # Clear the output to keep the notebook clean
         clear_output()
 
     return models
+
+def plot_model_results(models, alphas, cells_layer, num_hidden_layers, test_scenario_names, bayes_error_cv,chart_name, PATH_FIGS):
+
+    plot_results = {}
+
+    for c, n in product(cells_layer, num_hidden_layers):
+
+        plot_results[(c,n)] = {}
+
+        plot_results[(c,n)]['name'] = '{0} hidden layers, {1} cells'.format(n,c)
+
+
+        plot_results[(c,n)]['mse_train'] = np.zeros(len(alphas))
+        plot_results[(c,n)]['mse_cv'] = np.zeros(len(alphas))
+        plot_results[(c,n)]['spearman_train'] = np.zeros(len(alphas))
+        plot_results[(c,n)]['spearman_cv'] = np.zeros(len(alphas))
+        plot_results[(c,n)]['ks_train'] = np.zeros(len(alphas))
+        plot_results[(c,n)]['ks_cv'] = np.zeros(len(alphas))
+
+        for test in test_scenario_names:
+            plot_results[(c,n)]['spearman_' + test] = np.zeros(len(alphas))
+            plot_results[(c,n)]['ks_' + test] = np.zeros(len(alphas))
+
+
+
+    for m in models:
+
+        a = models[m]['model_params']['alpha'] 
+        n = models[m]['model_params']['hidden']
+        c = models[m]['model_params']['cells']
+
+        plot_results[(c,n)]['mse_train'][alphas.index(a)] = models[m]['mse_train']
+        plot_results[(c,n)]['mse_cv'][alphas.index(a)] = models[m]['mse_cv']
+
+        plot_results[(c,n)]['spearman_train'][alphas.index(a)] = models[m]['spearman_train'].correlation
+        plot_results[(c,n)]['spearman_cv'][alphas.index(a)] = models[m]['spearman_cv'].correlation
+
+        plot_results[(c,n)]['ks_train'][alphas.index(a)] = models[m]['ks_train'].statistic
+        plot_results[(c,n)]['ks_cv'][alphas.index(a)] = models[m]['ks_cv'].statistic
+
+        for test in test_scenario_names:           
+                    
+            plot_results[(c,n)]['spearman_' + test][alphas.index(a)] =  models[m]['spearman_' + test].correlation
+            plot_results[(c,n)]['ks_' + test][alphas.index(a)] = models[m]['ks_' + test].statistic
+
+    for p in plot_results:
+
+        plt.plot(plot_results[p]['mse_cv'], '.-', label = plot_results[p]['name'])
+        plt.axhline(y = bayes_error_cv, color = 'grey', linestyle = ':')
+        
+        
+        plt.xticks(ticks = range(len(alphas)),labels = alphas)
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.xlabel(r'Diff. machine learning $\alpha$')
+        plt.ylabel('Mean squared error in CV')
+
+        plt.gcf().set_size_inches(6,4)  
+
+        plt.title(chart_name + 'CV Mean Squared Error')
+
+        plt.savefig(PATH_FIGS + chart_name + 'MSE_CV.pdf',bbox_inches ='tight')
+
+    plt.figure()
+
+    for p in plot_results:
+
+        plt.plot(plot_results[p]['spearman_cv'], '.-', label = plot_results[p]['name'])
+        
+        
+        plt.xticks(ticks = range(len(alphas)),labels = alphas)
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.axhline(y = 0.80, color = 'yellow', linestyle = ':')
+        plt.axhline(y = 0.70, color = 'red', linestyle = ':')
+        plt.xlabel(r'Diff. machine learning $\alpha$');   
+
+        plt.title(chart_name + 'Spearman CV')
+
+        plt.savefig(PATH_FIGS + chart_name + 'Spearman_CV.pdf',bbox_inches ='tight')
+
+    plt.figure()
+
+    for p in plot_results:
+
+        plt.plot(plot_results[p]['ks_cv'], '.-', label = plot_results[p]['name'])
+        
+        plt.axhline(y = 0.12, color = 'red', linestyle = ':')
+        plt.axhline(y = 0.09, color = 'yellow', linestyle = ':')
+
+        
+        plt.xticks(ticks = range(len(alphas)),labels = alphas)
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.xlabel(r'Diff. machine learning $\alpha$');
+
+        plt.title(chart_name + 'KS CV')
+
+        plt.savefig(PATH_FIGS + chart_name + 'KS_CV.pdf',bbox_inches ='tight')
+
+    plt.figure()
+
+
+    for test in test_scenario_names:
+
+
+        for p in plot_results:
+
+            plt.plot(plot_results[p]['spearman_' + test], '.-', label = plot_results[p]['name'])
+            
+            
+            plt.xticks(ticks = range(len(alphas)),labels = alphas)
+            plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            plt.axhline(y = 0.80, color = 'yellow', linestyle = ':')
+            plt.axhline(y = 0.70, color = 'red', linestyle = ':')
+            plt.xlabel(r'Diff. machine learning $\alpha$');   
+
+            plt.title(chart_name + 'Spearman ' + test)
+
+            plt.savefig(PATH_FIGS + chart_name + 'Spearman_' + test + '.pdf',bbox_inches ='tight')
+
+        plt.figure()
+
+        for p in plot_results:
+
+            plt.plot(plot_results[p]['ks_' + test], '.-', label = plot_results[p]['name'])
+            
+            plt.axhline(y = 0.12, color = 'red', linestyle = ':')
+            plt.axhline(y = 0.09, color = 'yellow', linestyle = ':')
+
+            
+            plt.xticks(ticks = range(len(alphas)),labels = alphas)
+            plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            plt.xlabel(r'Diff. machine learning $\alpha$');
+
+            plt.title(chart_name + 'KS ' + test)
+
+            plt.savefig(PATH_FIGS + chart_name + 'KS_' + test + '.pdf',bbox_inches ='tight')
+
+        plt.figure()
+
+
+
+
+
+    
+
+
+
+
+
+
 

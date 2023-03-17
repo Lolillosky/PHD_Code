@@ -30,15 +30,14 @@ def delete_content_of_folder(folder):
 
 
 
-def plot_schocks(number_risk_factors, schocks_back, schocks_front, risk_factor_names, bins):
+def plot_schocks(number_risk_factors, list_of_shocks, risk_factor_names, bins):
 
     '''
     Generates plots equivalent to Seaborn's pairplot but 2 distributions can be ploted
     Inputs:
     -------
     * number_risk_factors (int): number of risk factors.
-    * schocks_back (array(num_examples, num_risk_factors)): schocks to be plotted in the back.
-    * schocks_front (array(num_examples, num_risk_factors)): schocks to be plotted in the front.
+    * schocks_back list(array(num_examples, num_risk_factors)): schocks to be plotted in the back. Must be in np array
     * risk_factor_names (list(str)): list of risk factor names
     * bins (int): number of bins.
     '''
@@ -48,12 +47,12 @@ def plot_schocks(number_risk_factors, schocks_back, schocks_front, risk_factor_n
     for i in range(number_risk_factors):
         for j in range(number_risk_factors):
             if (i!=j):
-                ax[i,j].plot(schocks_back[:,i], schocks_back[:,j], '.', alpha = 0.5)
-                ax[i,j].plot(schocks_front.iloc[:,i], schocks_front.iloc[:,j], '.')
+                for s in list_of_shocks:
+                    ax[i,j].plot(s[:,i], s[:,j], '.', alpha = 0.5)
             else:
-                ax[i,j].hist(schocks_back[:,i], bins = bins, density = True, alpha = 0.5)
-                ax[i,j].hist(schocks_front.iloc[:,i], bins = bins, density = True, alpha = 0.5)
-
+                for s in list_of_shocks:
+                    ax[i,j].hist(s[:,i], bins = bins, density = True, alpha = 0.5)
+                
             if (j==0):
                 ax[i,j].set_ylabel(risk_factor_names[i])
             if (i==5):
