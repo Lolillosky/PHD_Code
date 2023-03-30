@@ -247,7 +247,7 @@ class Diff_learning_scaler:
 
       loss_val = DiffLearningEarlySpotLoss(y_mu = self.y_mu, y_sigma = self.y_sigma, name = 'Myval_Loss')
 
-      early_stop = tf.keras.callbacks.EarlyStopping(monitor="val_Myval_Loss", patience=validation_data['patience'],
+      early_stop = tf.keras.callbacks.EarlyStopping(monitor="val_Myval_Loss", patience=validation_data['patience'], start_from_epoch = validation_data['start_from_epoch'], 
                 restore_best_weights=True, mode="min")
 
   
@@ -370,7 +370,7 @@ def build_dense_model(input_shape, num_hidden_layers, num_neurons_hidden_layers,
 
   dense_model = tf.keras.Sequential()
 
-  if num_hidden_layers>1:
+  if num_hidden_layers>=1:
 
     dense_model.add(tf.keras.layers.Dense(num_neurons_hidden_layers, input_shape=(input_shape,), activation = hidden_layer_activation))
   

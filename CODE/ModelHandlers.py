@@ -127,7 +127,7 @@ def load_models(PATH_MODELS, alphas, cells_layer, num_hidden_layers):
 
 def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_scenarios_train, payoff_train, sim_scenarios_cv, payoff_cv, 
                        closed_formula_plus_adj_train, closed_formula_plus_adj_cv, model_adj_train, model_adj_cv,
-                       test_scenarios_data, adjust_model_with_base_scenario):
+                       test_scenarios_data, base_scenario_adj_option):
     """
     Compute metrics for multiple models with different hyperparameters.
 
@@ -150,7 +150,8 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
         - 'scenario' (numpy.ndarray): An array of simulated scenarios used for test.
         - 'closed_formula_plus_adj' (numpy.ndarray): An array of the closed form formula plus adjustments.
         - 'model_adj': array of model adjustments not dependent on base scenario.
-    adjust_model_with_base_scenario (bool): flag indicating whether to adjust model with base scenario.
+        - 'base_scenario_closed_form_sens': only yo be included for base scenario.
+    base_scenario_adj_option (str): flag indicating whether to adjust model with base scenario. Options: ('No','NPV','NPV_plus_sens')
 
     Returns:
     dict: dictionary of model metrics with hyperparameters as keys and metrics as values.
@@ -169,28 +170,43 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
         # Load the current model
         model = models[(a,n,c)]['model']
 
-        if adjust_model_with_base_scenario:
-            # We calculate the estimate for the base scenario
-            model_adj_base = - model.predict(test_scenarios_data[0]['scenario'], batch_size = 1)['y']
-        else:
-            model_adj_base = 0.0
-
         # Compute the mean squared error between the predicted payoffs and the actual payoffs for the training data
         y_pred_train = model.predict(sim_scenarios_train, batch_size = len(sim_scenarios_train))['y']
         mse_train = mean_squared_error(y_pred_train, payoff_train)
 
         # Compute the mean squared error between the predicted payoffs and the actual payoffs for the cross-validation data
         y_pred_cv = model.predict(sim_scenarios_cv, batch_size = len(sim_scenarios_cv))['y']
+        
+
         mse_cv = mean_squared_error(y_pred_cv, payoff_cv)
 
-        # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for the training data
-        spearman_train, _ = spearmanr(y_pred_train + model_adj_base + model_adj_train, closed_formula_plus_adj_train)
-        ks_train, _ = ks_2samp(y_pred_train + model_adj_base + model_adj_train, closed_formula_plus_adj_train)
+        
+        if (base_scenario_adj_option == 'NPV') or (base_scenario_adj_option == 'NPV_plus_sens'):
+            # We calculate the estimate for the base scenario
+            model_adj_base = - model.predict(test_scenarios_data[0]['scenario'], batch_size = 1)['y']
+        else:
+            model_adj_base = 0.0
 
+        if (base_scenario_adj_option == 'NPV_plus_sens'):
+            # If adjustment option includes sensibilities
+            # Compute model sensitivities for base scenario
+            model_sens_base_scenario = model.predict(test_scenarios_data[0]['scenario'], batch_size = 1)['sens']
+            model_adj_base_sens_cv = np.matmul(sim_scenarios_cv-test_scenarios_data[0]['scenario'],(test_scenarios_data[0]['base_scenario_closed_form_sens'] - model_sens_base_scenario).T).flatten()
+            model_adj_base_sens_train = np.matmul(sim_scenarios_train-test_scenarios_data[0]['scenario'],(test_scenarios_data[0]['base_scenario_closed_form_sens'] - model_sens_base_scenario).T).flatten()
+            
+        else:
+            model_adj_base_sens_cv = 0.0
+            model_adj_base_sens_train = 0.0
+
+
+        # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for the training data
+        spearman_train, _ = spearmanr(y_pred_train + model_adj_base + model_adj_base_sens_train + model_adj_train, closed_formula_plus_adj_train)
+        ks_train, _ = ks_2samp(y_pred_train + model_adj_base + model_adj_base_sens_train + model_adj_train, closed_formula_plus_adj_train)
+        
 
         # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for the cross-validation data
-        spearman_cv, _ = spearmanr(y_pred_cv + model_adj_base + model_adj_cv, closed_formula_plus_adj_cv)
-        ks_cv, _ = ks_2samp(y_pred_cv + model_adj_base + model_adj_cv, closed_formula_plus_adj_cv)
+        spearman_cv, _ = spearmanr(y_pred_cv + model_adj_base + model_adj_base_sens_cv + model_adj_cv, closed_formula_plus_adj_cv)
+        ks_cv, _ = ks_2samp(y_pred_cv + model_adj_base + model_adj_base_sens_cv + model_adj_cv, closed_formula_plus_adj_cv)
 
         # Construct a dictionary containing the results for the current model
         results_dict = {}
@@ -211,9 +227,17 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
             # Predict model for historical scenarios
             y_pred_test = model.predict(test_scenarios_data[i]['scenario'], batch_size = len(test_scenarios_data[i]['scenario']))['y']
 
+            if (base_scenario_adj_option == 'NPV_plus_sens'):
+                # If adjustment option includes sensibilities
+                # Compute model sensitivities for base scenario
+                model_adj_base_sens_test = np.matmul(test_scenarios_data[i]['scenario']-test_scenarios_data[0]['scenario'],(test_scenarios_data[0]['base_scenario_closed_form_sens'] - model_sens_base_scenario).T).flatten()
+            else:
+                model_adj_base_sens_test = 0.0
+
+
             # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for historical scenarios
-            spearman_test, _ = spearmanr(y_pred_test + model_adj_base + test_scenarios_data[i]['model_adj'], test_scenarios_data[i]['closed_formula_plus_adj'])
-            ks_hist_test, _ = ks_2samp(y_pred_test + model_adj_base + test_scenarios_data[i]['model_adj'], test_scenarios_data[i]['closed_formula_plus_adj'])
+            spearman_test, _ = spearmanr(y_pred_test + model_adj_base + model_adj_base_sens_test + test_scenarios_data[i]['model_adj'], test_scenarios_data[i]['closed_formula_plus_adj'])
+            ks_hist_test, _ = ks_2samp(y_pred_test + model_adj_base + model_adj_base_sens_test + test_scenarios_data[i]['model_adj'], test_scenarios_data[i]['closed_formula_plus_adj'])
 
             results_dict['spearman_' + test_scenarios_data[i]['scenario_name']] = spearman_test
             results_dict['ks_' + test_scenarios_data[i]['scenario_name']] = ks_hist_test
@@ -233,114 +257,10 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
     print('Best model:')
     print(metrics[mse_keys[np.argmin(mse_list)]])
 
-    return metrics
+    return metrics, metrics[mse_keys[np.argmin(mse_list)]]
 
 
-
-
-def load_set_of_models_and_compute_metrics(PATH_MODELS, alphas, cells_layer, num_hidden_layers, sim_scenarios_train, payoff_train, sim_scenarios_cv, payoff_cv, 
-                       closed_formula_train, closed_formula_train_cv, test_scenarios_and_closed_formula):
-    """
-    Loads a set of models and computes various evaluation metrics for each model.
-    
-    Args:
-    _____
-    * PATH_MODELS (str): The path to the directory where the models are stored.
-    * alphas (list of float): A list of values for the alpha hyperparameter.
-    * cells_layer (list of int): A list of values for the number of cells in each layer of the neural network.
-    * num_hidden_layer (list of int): A list of values for the number of hidden layers in the neural network.
-    * sim_scenarios_train (numpy.ndarray): An array of simulated scenarios used for training the models.
-    * payoff_train (numpy.ndarray): An array of payoff values corresponding to the simulated scenarios used for training.
-    * sim_scenarios_cv (numpy.ndarray): An array of simulated scenarios used for cross-validation.
-    * payoff_cv (numpy.ndarray): An array of payoff values corresponding to the simulated scenarios used for cross-validation.
-    * closed_formula_train (numpy.ndarray): An array of closed-formula prices corresponding to the simulated scenarios used for training.
-    * closed_formula_train_cv (numpy.ndarray): An array of closed-formula prices corresponding to the simulated scenarios used for cross-validation.
-    * test_scenarios_and_closed_formula list(dict): list of dictionaries containing historical scenarios, their closed form formulas and their names. First element is base scenario. Keys:
-        - 'scenario_name' (str)
-        - 'scenario' (numpy.ndarray): An array of simulated scenarios used for cross-validation.
-        - 'closed_formula' (numpy.ndarray): An array of the closed form formula.
-    
-    Returns:
-    ________
-    dict: A dictionary where the keys are tuples of (alpha, num_hidden_layer, cells_layer) and the values are dictionaries with various evaluation metrics for each model.
-    """
-    models = {}
-
-
-    # We get closed form formula from base scenario. Notice that scenario 0 represents base scenario.
-    closed_formula_base = test_scenarios_and_closed_formula[0]['closed_formula']
-
-    # Iterate over all combinations of hyperparameters
-    for a, c, n in product(alphas, cells_layer, num_hidden_layers):
-
-        # Construct the name of the model based on the hyperparameters
-        model_name = 'alpha' + '_' + str(a) + '_cells_' + str(c) + '_hidden_' + str(n) 
-
-        # Print the name of the current model
-        print(model_name)
-
-        # Construct the path to the directory where the current model is stored
-        path = PATH_MODELS +  model_name + '/'
-
-        # Load the current model
-        model = Deep_learning_models.Diff_learning_scaler.open(path)
-
-        # We calculate the estimate for the base scenario
-        pred_base = model.predict(test_scenarios_and_closed_formula[0]['scenario'], batch_size = 1)['y']
-
-        # Compute the mean squared error between the predicted payoffs and the actual payoffs for the training data
-        y_pred_train = model.predict(sim_scenarios_train, batch_size = len(sim_scenarios_train))['y']
-        mse_train = mean_squared_error(y_pred_train, payoff_train)
-
-        # Compute the mean squared error between the predicted payoffs and the actual payoffs for the cross-validation data
-        y_pred_cv = model.predict(sim_scenarios_cv, batch_size = len(sim_scenarios_cv))['y']
-        mse_cv = mean_squared_error(y_pred_cv, payoff_cv)
-
-        
-
-        # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for the training data
-        spearman_train = spearmanr(y_pred_train - pred_base, closed_formula_train - closed_formula_base)
-        ks_train = ks_2samp(y_pred_train - pred_base, closed_formula_train - closed_formula_base)
-
-        # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for the cross-validation data
-        spearman_cv = spearmanr(y_pred_cv - pred_base, closed_formula_train_cv - closed_formula_base)
-        ks_cv = ks_2samp(y_pred_cv - pred_base, closed_formula_train_cv - closed_formula_base)
-
-        # Construct a dictionary containing the results for the current model
-        results_dict = {}
-        results_dict['model_name'] = model_name
-        results_dict['model_params'] = {'alpha': a, 'cells': c, 'hidden': n}
-
-        results_dict['model'] = model
-        results_dict['mse_train'] = mse_train
-        results_dict['mse_cv'] = mse_cv
-        results_dict['spearman_train'] = spearman_train
-        results_dict['spearman_cv'] = spearman_cv
-        results_dict['ks_train'] = ks_train
-        results_dict['ks_cv'] = ks_cv
-        
-        # Add the results for the current model to the dictionary of all models
-        models[(a,n,c)] = results_dict
-        
-        for i in range(1,len(test_scenarios_and_closed_formula)):
-            # Predict model for historical scenarios
-            y_pred_test = model.predict(test_scenarios_and_closed_formula[i]['scenario'], batch_size = len(test_scenarios_and_closed_formula[i]['scenario']))['y']
-
-
-            # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for historical scenarios
-            spearman_test = spearmanr(y_pred_test - pred_base, test_scenarios_and_closed_formula[i]['closed_formula'] - closed_formula_base)
-            ks_hist_test = ks_2samp(y_pred_test - pred_base, test_scenarios_and_closed_formula[i]['closed_formula'] - closed_formula_base)
-
-            results_dict['spearman_' + test_scenarios_and_closed_formula[i]['scenario_name']] = spearman_test
-            results_dict['ks_' + test_scenarios_and_closed_formula[i]['scenario_name']] = ks_hist_test
-
-                    
-        # Clear the output to keep the notebook clean
-        clear_output()
-
-    return models
-
-def plot_model_results(models, alphas, cells_layer, num_hidden_layers, test_scenario_names, bayes_error_cv,
+def plot_model_results(metrics, best_model_metrics, alphas, cells_layer, num_hidden_layers, test_scenario_names, bayes_error_cv,
                        file_name, chart_name, chart_sub_name_FRTB, PATH_FIGS):
 
     plot_results = {}
@@ -365,29 +285,38 @@ def plot_model_results(models, alphas, cells_layer, num_hidden_layers, test_scen
 
 
 
-    for m in models:
+    for m in metrics:
 
-        a = models[m]['model_params']['alpha'] 
-        n = models[m]['model_params']['hidden']
-        c = models[m]['model_params']['cells']
+        a = metrics[m]['model_params']['alpha'] 
+        n = metrics[m]['model_params']['hidden']
+        c = metrics[m]['model_params']['cells']
 
-        plot_results[(c,n)]['mse_train'][alphas.index(a)] = models[m]['mse_train']
-        plot_results[(c,n)]['mse_cv'][alphas.index(a)] = models[m]['mse_cv']
+        plot_results[(c,n)]['mse_train'][alphas.index(a)] = metrics[m]['mse_train']
+        plot_results[(c,n)]['mse_cv'][alphas.index(a)] = metrics[m]['mse_cv']
 
-        plot_results[(c,n)]['spearman_train'][alphas.index(a)] = models[m]['spearman_train']
-        plot_results[(c,n)]['spearman_cv'][alphas.index(a)] = models[m]['spearman_cv']
+        plot_results[(c,n)]['spearman_train'][alphas.index(a)] = metrics[m]['spearman_train']
+        plot_results[(c,n)]['spearman_cv'][alphas.index(a)] = metrics[m]['spearman_cv']
 
-        plot_results[(c,n)]['ks_train'][alphas.index(a)] = models[m]['ks_train']
-        plot_results[(c,n)]['ks_cv'][alphas.index(a)] = models[m]['ks_cv']
+        plot_results[(c,n)]['ks_train'][alphas.index(a)] = metrics[m]['ks_train']
+        plot_results[(c,n)]['ks_cv'][alphas.index(a)] = metrics[m]['ks_cv']
 
         for test in test_scenario_names:           
                     
-            plot_results[(c,n)]['spearman_' + test][alphas.index(a)] =  models[m]['spearman_' + test]
-            plot_results[(c,n)]['ks_' + test][alphas.index(a)] = models[m]['ks_' + test]
+            plot_results[(c,n)]['spearman_' + test][alphas.index(a)] =  metrics[m]['spearman_' + test]
+            plot_results[(c,n)]['ks_' + test][alphas.index(a)] = metrics[m]['ks_' + test]
 
     for p in plot_results:
 
-        plt.plot(plot_results[p]['mse_cv'], '.-', label = plot_results[p]['name'])
+        if (p[0] == best_model_metrics['model_params']['cells']) and (p[1] == best_model_metrics['model_params']['hidden']):  
+            plt.plot(plot_results[p]['mse_cv'], '.-', label = plot_results[p]['name'], linewidth=3)
+            
+            index_best = alphas.index(best_model_metrics['model_params']['alpha'])
+
+            plt.plot(index_best,plot_results[p]['mse_cv'][index_best], 'o',  markersize = 8, markerfacecolor='none', markeredgecolor='black')
+            
+        else:
+            plt.plot(plot_results[p]['mse_cv'], '.-', label = plot_results[p]['name'])
+
         plt.axhline(y = bayes_error_cv, color = 'grey', linestyle = ':')
         
         
@@ -407,9 +336,17 @@ def plot_model_results(models, alphas, cells_layer, num_hidden_layers, test_scen
 
     for p in plot_results:
 
-        plt.plot(plot_results[p]['spearman_cv'], '.-', label = plot_results[p]['name'])
+        if (p[0] == best_model_metrics['model_params']['cells']) and (p[1] == best_model_metrics['model_params']['hidden']):  
+
+            plt.plot(plot_results[p]['spearman_cv'], '.-', label = plot_results[p]['name'], linewidth=3)
+
+            index_best = alphas.index(best_model_metrics['model_params']['alpha'])
+
+            plt.plot(index_best,plot_results[p]['spearman_cv'][index_best], 'o',  markersize = 8, markerfacecolor='none', markeredgecolor='black')
         
-        
+        else:
+            plt.plot(plot_results[p]['spearman_cv'], '.-', label = plot_results[p]['name'])
+
         plt.xticks(ticks = range(len(alphas)),labels = alphas)
         plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
         plt.axhline(y = 0.80, color = 'yellow', linestyle = ':')
@@ -427,11 +364,20 @@ def plot_model_results(models, alphas, cells_layer, num_hidden_layers, test_scen
 
     for p in plot_results:
 
-        plt.plot(plot_results[p]['ks_cv'], '.-', label = plot_results[p]['name'])
+        if (p[0] == best_model_metrics['model_params']['cells']) and (p[1] == best_model_metrics['model_params']['hidden']):  
+
+            plt.plot(plot_results[p]['ks_cv'], '.-', label = plot_results[p]['name'], linewidth=3)
+            index_best = alphas.index(best_model_metrics['model_params']['alpha'])
+
+            plt.plot(index_best,plot_results[p]['ks_cv'][index_best], 'o',  markersize = 8, markerfacecolor='none', markeredgecolor='black')
+        
+        else:
+            plt.plot(plot_results[p]['ks_cv'], '.-', label = plot_results[p]['name'])
+
         
         plt.axhline(y = 0.12, color = 'red', linestyle = ':')
         plt.axhline(y = 0.09, color = 'yellow', linestyle = ':')
-        plt.ylim(0.0,0.2)
+        plt.ylim(0.0,0.3)
 
         
         plt.xticks(ticks = range(len(alphas)),labels = alphas)
@@ -451,8 +397,18 @@ def plot_model_results(models, alphas, cells_layer, num_hidden_layers, test_scen
 
         for p in plot_results:
 
-            plt.plot(plot_results[p]['spearman_' + test], '.-', label = plot_results[p]['name'])
+            if (p[0] == best_model_metrics['model_params']['cells']) and (p[1] == best_model_metrics['model_params']['hidden']):
+
+                plt.plot(plot_results[p]['spearman_' + test], '.-', label = plot_results[p]['name'], linewidth=3)
+
+                index_best = alphas.index(best_model_metrics['model_params']['alpha'])
+
+                plt.plot(index_best,plot_results[p]['spearman_' + test][index_best], 'o',  markersize = 8, markerfacecolor='none', markeredgecolor='black')
             
+            else:
+
+                plt.plot(plot_results[p]['spearman_' + test], '.-', label = plot_results[p]['name'])
+
             
             plt.xticks(ticks = range(len(alphas)),labels = alphas)
             plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
@@ -470,7 +426,14 @@ def plot_model_results(models, alphas, cells_layer, num_hidden_layers, test_scen
 
         for p in plot_results:
 
-            plt.plot(plot_results[p]['ks_' + test], '.-', label = plot_results[p]['name'])
+            if (p[0] == best_model_metrics['model_params']['cells']) and (p[1] == best_model_metrics['model_params']['hidden']):  
+
+                plt.plot(plot_results[p]['ks_' + test], '.-', label = plot_results[p]['name'], linewidth=3)
+                index_best = alphas.index(best_model_metrics['model_params']['alpha'])
+
+                plt.plot(index_best,plot_results[p]['ks_' + test][index_best], 'o',  markersize = 8, markerfacecolor='none', markeredgecolor='black')
+            else:
+                plt.plot(plot_results[p]['ks_' + test], '.-', label = plot_results[p]['name'])
             
             plt.axhline(y = 0.12, color = 'red', linestyle = ':')
             plt.axhline(y = 0.09, color = 'yellow', linestyle = ':')
@@ -480,7 +443,7 @@ def plot_model_results(models, alphas, cells_layer, num_hidden_layers, test_scen
             plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
             plt.xlabel(r'Diff. machine learning $\alpha$');
             plt.ylabel(r'Kolmogorov-Smirnov statistic ' + test);   
-            plt.ylim(0.0,0.2)
+            plt.ylim(0.0,0.3)
 
             plt.title(chart_name + test)
 
