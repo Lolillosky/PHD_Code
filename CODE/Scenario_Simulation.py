@@ -139,7 +139,7 @@ from enum import Enum
 
 
 
-def simulate_product_payoff(mkt_risk_scenario_levels, spot_indexes, vol_indexes, correlations, rfr, divs, ttm, random_seed, payoff, tf_option):
+def simulate_product_discounted_payoff(mkt_risk_scenario_levels, spot_indexes, vol_indexes, correlations, rfr, divs, ttm, random_seed, payoff, tf_option):
     """
     Simulate product payoff.
 
@@ -163,14 +163,18 @@ def simulate_product_payoff(mkt_risk_scenario_levels, spot_indexes, vol_indexes,
 
         spots_t = mkt_risk_scenario_levels[:, spot_indexes] * np.exp((rfr - divs - 0.5 *mkt_risk_scenario_levels[:, vol_indexes]**2) * ttm + mkt_risk_scenario_levels[:, vol_indexes] * brow_correl)
 
+        return payoff(spots_t)*np.exp(-rfr*ttm)
+
     elif tf_option == Include_Tensorflow_Calcs_option.YES:
     
         spots_t = mkt_risk_scenario_levels[:, spot_indexes] * tf.exp((rfr - divs - 0.5 *mkt_risk_scenario_levels[:, vol_indexes]**2) * ttm + mkt_risk_scenario_levels[:, vol_indexes] * brow_correl)
 
+        return payoff(spots_t)*tf.exp(-rfr*ttm)
+    else:
+        raise ValueError("Invalid value for tf_option.")
+    
 
-    return payoff(spots_t)
-
-def basket_option(spots_t, indiv_strikes, option_strike, rfr, ttm, tf_option):
+def basket_option(spots_t, indiv_strikes, option_strike, tf_option):
     """
     Calculate the payoff for a Basket Option.
 
@@ -181,12 +185,87 @@ def basket_option(spots_t, indiv_strikes, option_strike, rfr, ttm, tf_option):
     """
 
     if tf_option == Include_Tensorflow_Calcs_option.YES:
-        return tf.maximum(tf.exp(tf.reduce_mean(tf.math.log(spots_t/indiv_strikes), axis=1)) - option_strike, 0) * tf.exp(-rfr * ttm)
+        return tf.maximum(tf.exp(tf.reduce_mean(tf.math.log(spots_t/indiv_strikes), axis=1)) - option_strike, 0)
     elif tf_option == Include_Tensorflow_Calcs_option.NO:
-        return np.maximum(np.exp(np.mean(np.log(spots_t/indiv_strikes), axis=1)) - option_strike, 0) * np.exp(-rfr * ttm)
+        return np.maximum(np.exp(np.mean(np.log(spots_t/indiv_strikes), axis=1)) - option_strike, 0)
     else:
         raise ValueError("Invalid value for tf_option.")
 
 
+def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenario_dict, simulation_dict, contract_data_dict, hist_schocks_data):
+    """
+    Calibrates a Gaussian model using historical shocks data and then simulates training data for market risk scenarios.
 
+    Parameters:
+    - gaussian_model_dict: Dictionary containing parameters for the Gaussian model.
+    - base_scenario_dict: Dictionary defining the base scenario.
+    - simulation_dict: Dictionary containing simulation settings.
+    - contract_data_dict: Dictionary containing contract-related data.
+    - hist_schocks_data: Historical shocks data.
 
+    Returns:
+    - Dictionary containing simulated scenario shifts, scenario levels, discounted payoff, and pathwise derivatives.
+    """
+    
+    # Initialize and calibrate Gaussian model
+    gm_model = GaussianModel()
+    gm_model.fit(n_components=gaussian_model_dict['n_components'], data=hist_schocks_data, model_seed=gaussian_model_dict['gaussian_model_seed'])
+    
+    # Simulate market risk scenario shifts
+    sim_scenario_shifts = simulate_mkt_risk_scenario_shifts(scenario_simulator=gm_model, number_of_scenarios=simulation_dict['number_of_scenarios'])
+    
+    # Define base scenario
+    base_scenario = np.zeros(hist_schocks_data.shape[1])
+    base_scenario[base_scenario_dict['spot_indexes']] = base_scenario_dict['spots']
+    base_scenario[base_scenario_dict['vol_indexes']] = base_scenario_dict['vols']
+    
+    # Generate market risk scenario levels
+    sim_scenario_levels = generate_mkt_risk_scenarios_levels(base_scenario=base_scenario, 
+                                                             scenario_shifts=sim_scenario_shifts, 
+                                                             generation_option=simulation_dict['shocks_generation_option'])
+    
+    # Check for TensorFlow calculations inclusion option and perform calculations accordingly
+    if simulation_dict['tf_generation_option'] == Include_Tensorflow_Calcs_option.YES:
+        sim_scenario_levels_TF = tf.constant(sim_scenario_levels)
+
+        with tf.GradientTape() as tape:
+            tape.watch(sim_scenario_levels_TF)
+            discounted_payoff = simulate_product_discounted_payoff(mkt_risk_scenario_levels=sim_scenario_levels_TF,
+                                                                   spot_indexes=base_scenario_dict['spot_indexes'], 
+                                                                   vol_indexes=base_scenario_dict['vol_indexes'],
+                                                                   correlations=base_scenario_dict['correlations'], 
+                                                                   rfr=base_scenario_dict['rfr'],
+                                                                   divs=base_scenario_dict['divs'],
+                                                                   ttm=contract_data_dict['ttm'],
+                                                                   random_seed=simulation_dict['simulation_seed'],
+                                                                   payoff=contract_data_dict['payoff'],
+                                                                   tf_option=simulation_dict['tf_generation_option'])
+            
+        # Compute pathwise derivatives
+        pathwise_derivs = tape.gradient(discounted_payoff, sim_scenario_levels_TF).numpy()
+        discounted_payoff = discounted_payoff.numpy() 
+
+    elif simulation_dict['tf_generation_option'] == Include_Tensorflow_Calcs_option.NO:
+        discounted_payoff = simulate_product_discounted_payoff(mkt_risk_scenario_levels=sim_scenario_levels,
+                                                               spot_indexes=base_scenario_dict['spot_indexes'], 
+                                                               vol_indexes=base_scenario_dict['vol_indexes'],
+                                                               correlations=base_scenario_dict['correlations'], 
+                                                               rfr=base_scenario_dict['rfr'],
+                                                               divs=base_scenario_dict['divs'],
+                                                               ttm=contract_data_dict['ttm'],
+                                                               random_seed=simulation_dict['simulation_seed'],
+                                                               payoff=contract_data_dict['payoff'],
+                                                               tf_option=simulation_dict['tf_generation_option'])
+        pathwise_derivs = None
+    else:
+        raise ValueError("Invalid value for tf_option.")
+
+    # Prepare the return dictionary
+    return_dict = {
+        'sim_scenario_shifts': sim_scenario_shifts,
+        'sim_scenario_levels': sim_scenario_levels,
+        'payoff': discounted_payoff,
+        'pathwise_derivs': pathwise_derivs
+    }
+
+    return return_dict
