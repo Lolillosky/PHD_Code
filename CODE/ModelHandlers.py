@@ -12,7 +12,7 @@ from scipy.stats import ks_2samp
 import matplotlib.pyplot as plt
 
 
-def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, sim_scenarios_train, payoff_train, sens_train, epochs ,batch_size, valid_data = None):
+def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, hidden_activ_func, sim_scenarios_train, payoff_train, sens_train, epochs ,batch_size, valid_data = None):
 
     '''
     Trains a set of deep learning models.
@@ -22,6 +22,7 @@ def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, sim_sc
     * alphas (list(float)): Contains set of alpha (diff machine learning parameter).
     * cells_layer (list(int)): Contains set of number of cells per layer.
     * num_hidden_layers (list(int)): Contains set of number of hidden layers.
+    * hidden_activ_func: Activation function of hidden layer
     * sim_scenarios_train (np.array) : Contains X variable (number of scenarios x number of risk factors).
     * payoff_train (np.array): Contains y variable (number of scenarios)
     * sens_train (np.array): Contains pathwise differentials (umber of scenarios x number of risk factors)
@@ -51,7 +52,7 @@ def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, sim_sc
         os.mkdir(path)
 
          # Build a deep learning model with the specified number of hidden layers and cells per layer using the "build_dense_model" function
-        dense_model = Deep_learning_models.build_dense_model(sim_scenarios_train.shape[1],n,c,'relu','linear')
+        dense_model = Deep_learning_models.build_dense_model(sim_scenarios_train.shape[1],n,c,hidden_activ_func,'linear')
 
         # Wrap the model in a "Diff_learning_scaler" class, which applies a scaling factor alpha to the gradients during training
         model = Deep_learning_models.Diff_learning_scaler(Deep_learning_models.DiffLearning(dense_model), alpha = a)
@@ -140,16 +141,21 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
     payoff_train (np.ndarray): array of actual payoffs for training.
     sim_scenarios_cv (np.ndarray): array of simulated scenarios for cross-validation.
     payoff_cv (np.ndarray): array of actual payoffs for cross-validation.
-    closed_formula_plus_adj_train (np.ndarray): array of closed formula prices plus adjustments for training.
-    closed_formula_plus_adj_cv (np.ndarray): array of closed formula prices plus adjustments for cross-validation.
-    model_adj_train (np.ndarray): array of model adjustments for training.
+    closed_formula_plus_adj_train (np.ndarray): array of closed formula prices plus adjustments for training: 
+        could be closed form formula for each scenario minus the closed form formula of the base scenario.
+        could include the increment in the hedged basket. 
+    closed_formula_plus_adj_cv (np.ndarray): array of closed formula prices plus adjustments for cross-validation:
+        same as the previous comment for cv.
+    model_adj_train (np.ndarray): array of model adjustments for training:
+        Represents the adjustment to be made for the model prediction. Could be -closed_form_base and include 
+        + basket_PL_inc. Since variance reduction is done with model predictions, it is not included here.
     model_adj_cv (np.ndarray): array of model adjustments for cross-validation.
     test_scenarios_data (list): list of dictionaries containing test scenarios with keys for scenario name, scenario data, 
                                 closed formula prices plus adjustments, and model adjustments. Keys:
         - 'scenario_name' (str)
         - 'scenario' (numpy.ndarray): An array of simulated scenarios used for test.
-        - 'closed_formula_plus_adj' (numpy.ndarray): An array of the closed form formula plus adjustments.
-        - 'model_adj': array of model adjustments not dependent on base scenario.
+        - 'closed_formula_plus_adj' (numpy.ndarray): An array of the closed form formula plus adjustments. See comments above.
+        - 'model_adj': array of model adjustments not dependent on base scenario. See comments above.
         - 'base_scenario_closed_form_sens': only yo be included for base scenario.
     base_scenario_adj_option (str): flag indicating whether to adjust model with base scenario. Options: ('No','NPV','NPV_plus_sens')
 
@@ -219,6 +225,9 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
         results_dict['spearman_cv'] = spearman_cv
         results_dict['ks_train'] = ks_train
         results_dict['ks_cv'] = ks_cv
+        results_dict['cv_scenarios_closed_form'] = closed_formula_plus_adj_cv
+        results_dict['cv_scenarios_model_results_plus_adjustments'] = y_pred_cv + model_adj_base + model_adj_base_sens_cv + model_adj_cv
+        
         
         # Add the results for the current model to the dictionary of all models
         metrics[(a,n,c)] = results_dict
@@ -242,22 +251,37 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
             results_dict['spearman_' + test_scenarios_data[i]['scenario_name']] = spearman_test
             results_dict['ks_' + test_scenarios_data[i]['scenario_name']] = ks_hist_test
 
+            results_dict['cv_scenarios_closed_form' + test_scenarios_data[i]['scenario_name']] =  test_scenarios_data[i]['closed_formula_plus_adj']
+
+            results_dict['cv_scenarios_model_results_plus_adjustments' + test_scenarios_data[i]['scenario_name']] = y_pred_test + model_adj_base + model_adj_base_sens_test + test_scenarios_data[i]['model_adj']
+            
+
         # Clear the output to keep the notebook clean
         clear_output()
     
     mse_list = []
     mse_keys = []
 
+    mse_list_zero_alpha = []
+    mse_keys_zero_alpha = []
+
+
     for key in metrics:
 
         mse_keys += [key]
         mse_list += [metrics[key]['mse_cv']]   
 
+        if key[0] == 0:
 
-    print('Best model:')
-    print(metrics[mse_keys[np.argmin(mse_list)]])
+            mse_keys_zero_alpha += [key]
+            mse_list_zero_alpha += [metrics[key]['mse_cv']]   
 
-    return metrics, metrics[mse_keys[np.argmin(mse_list)]]
+
+
+    # print('Best model:')
+    # print(metrics[mse_keys[np.argmin(mse_list)]])
+
+    return metrics, metrics[mse_keys[np.argmin(mse_list)]], metrics[mse_keys_zero_alpha[np.argmin(mse_list_zero_alpha)]]
 
 
 def plot_model_results(metrics, best_model_metrics, alphas, cells_layer, num_hidden_layers, test_scenario_names, bayes_error_cv,

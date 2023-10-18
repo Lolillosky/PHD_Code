@@ -13,6 +13,10 @@ class Include_Tensorflow_Calcs_option(Enum):
     YES = 1
     NO = 2
 
+class Simulate_Var_Red_Payoff(Enum):
+    YES = 1
+    NO = 2
+
 
 class GaussianModel:
     """
@@ -203,6 +207,7 @@ def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenari
     - contract_data_dict: Dictionary containing contract-related data.
     - hist_schocks_data: Historical shocks data.
 
+
     Returns:
     - Dictionary containing simulated scenario shifts, scenario levels, discounted payoff, and pathwise derivatives.
     """
@@ -219,7 +224,13 @@ def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenari
     base_scenario[base_scenario_dict['spot_indexes']] = base_scenario_dict['spots']
     base_scenario[base_scenario_dict['vol_indexes']] = base_scenario_dict['vols']
     
-    # Generate market risk scenario levels
+    # Generate market risk scenario levels for historical shocks applied to base scenario
+    hist_scenario_levels = generate_mkt_risk_scenarios_levels(base_scenario=base_scenario, 
+                                                             scenario_shifts=hist_schocks_data, 
+                                                             generation_option=simulation_dict['shocks_generation_option'])
+    
+
+    # Generate market risk scenario levels for simulated data
     sim_scenario_levels = generate_mkt_risk_scenarios_levels(base_scenario=base_scenario, 
                                                              scenario_shifts=sim_scenario_shifts, 
                                                              generation_option=simulation_dict['shocks_generation_option'])
@@ -241,6 +252,24 @@ def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenari
                                                                    payoff=contract_data_dict['payoff'],
                                                                    tf_option=simulation_dict['tf_generation_option'])
             
+            if simulation_dict['Simulate_Var_Red_Payoff'] == Simulate_Var_Red_Payoff.YES:
+
+                base_scenario_repeated = np.repeat(base_scenario.reshape(1,-1), simulation_dict['number_of_scenarios'], axis = 0)
+
+                discounted_payoff_base = simulate_product_discounted_payoff(mkt_risk_scenario_levels=base_scenario_repeated,
+                                                                   spot_indexes=base_scenario_dict['spot_indexes'], 
+                                                                   vol_indexes=base_scenario_dict['vol_indexes'],
+                                                                   correlations=base_scenario_dict['correlations'], 
+                                                                   rfr=base_scenario_dict['rfr'],
+                                                                   divs=base_scenario_dict['divs'],
+                                                                   ttm=contract_data_dict['ttm'],
+                                                                   random_seed=simulation_dict['simulation_seed'],
+                                                                   payoff=contract_data_dict['payoff'],
+                                                                   tf_option=simulation_dict['tf_generation_option'])
+                
+                discounted_payoff = discounted_payoff - discounted_payoff_base
+
+            
         # Compute pathwise derivatives
         pathwise_derivs = tape.gradient(discounted_payoff, sim_scenario_levels_TF).numpy()
         discounted_payoff = discounted_payoff.numpy() 
@@ -256,16 +285,35 @@ def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenari
                                                                random_seed=simulation_dict['simulation_seed'],
                                                                payoff=contract_data_dict['payoff'],
                                                                tf_option=simulation_dict['tf_generation_option'])
+        
+        if simulation_dict['Simulate_Var_Red_Payoff'] == Simulate_Var_Red_Payoff.YES:
+
+            base_scenario_repeated = np.repeat(base_scenario.reshape(1,-1), simulation_dict['number_of_scenarios'], axis = 0)
+
+            discounted_payoff_base = simulate_product_discounted_payoff(mkt_risk_scenario_levels=base_scenario_repeated,
+                                                                spot_indexes=base_scenario_dict['spot_indexes'], 
+                                                                vol_indexes=base_scenario_dict['vol_indexes'],
+                                                                correlations=base_scenario_dict['correlations'], 
+                                                                rfr=base_scenario_dict['rfr'],
+                                                                divs=base_scenario_dict['divs'],
+                                                                ttm=contract_data_dict['ttm'],
+                                                                random_seed=simulation_dict['simulation_seed'],
+                                                                payoff=contract_data_dict['payoff'],
+                                                                tf_option=simulation_dict['tf_generation_option'])
+                            
+            discounted_payoff = discounted_payoff - discounted_payoff_base
+
         pathwise_derivs = None
     else:
         raise ValueError("Invalid value for tf_option.")
 
     # Prepare the return dictionary
     return_dict = {
+        'base_scenario': base_scenario,
         'sim_scenario_shifts': sim_scenario_shifts,
         'sim_scenario_levels': sim_scenario_levels,
         'payoff': discounted_payoff,
-        'pathwise_derivs': pathwise_derivs
-    }
+        'pathwise_derivs': pathwise_derivs,
+        'hist_scenario_levels': hist_scenario_levels}
 
     return return_dict
