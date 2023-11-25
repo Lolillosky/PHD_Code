@@ -1,6 +1,11 @@
 import tensorflow as tf
 import pickle
 import numpy as np
+from scipy.stats import spearmanr
+from scipy.stats import ks_2samp 
+import Miscellanea
+
+import Enums
 
 
 class DiffLearning_old(tf.keras.Model):
@@ -218,7 +223,7 @@ class Diff_learning_scaler:
 
     return {'X_scaled': X_scaled, 'y_scaled': y_scaled, 'dydX_scaled': dydX_scaled}
 
-  def fit(self, X, y, dydX, batch_size= 32, epochs= 20, validation_data = None):
+  def fit(self, X, y, dydX, batch_size= 32, epochs= 20, validation_data = None, plat_callback = None):
 
     '''
     Inputs:
@@ -253,14 +258,27 @@ class Diff_learning_scaler:
   
       self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss, metrics = [loss_val])
 
-      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=[early_stop, epoch_counter],
+      callbacks=[early_stop, epoch_counter]
+
+      if plat_callback is not None:
+
+        callbacks += [plat_callback]
+
+      
+      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=callbacks,
                 validation_data = (scaled_data_val['X_scaled'], y_to_model_val))
 
     else:
 
+      callbacks=[epoch_counter]
+
+      if plat_callback is not None:
+
+        callbacks += [plat_callback]
+
       self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss)
 
-      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=[epoch_counter])
+      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=callbacks)
 
   def predict(self, X, batch_size = 32):
 
@@ -382,6 +400,79 @@ def build_dense_model(input_shape, num_hidden_layers, num_neurons_hidden_layers,
 
   return dense_model
 
+def build_diff_learning_model(input_shape, num_hidden_layers, num_neurons_hidden_layers, hidden_layer_activation,
+                output_layer_activation, alpha):
+  
+  dense_model = build_dense_model(input_shape, num_hidden_layers, num_neurons_hidden_layers, hidden_layer_activation, output_layer_activation)
+
+  diff_learning_model = DiffLearning(dense_model)
+
+  return Diff_learning_scaler(diff_learning_model, alpha)
+  
 
 
 
+class Plat_Callback(tf.keras.callbacks.Callback):
+    def __init__(self, base_scenario_dict, test_scenario_dict, diff_learning_scaler, base_scenario_adj_option, count_show):
+
+      '''
+      - 'scenario' (numpy.ndarray): An array of simulated scenarios used for test.
+        - 'closed_formula_plus_adj' (numpy.ndarray): An array of the closed form formula plus adjustments. See comments above.
+        - 'model_adj': array of model adjustments not dependent on base scenario. See comments above.
+        - 'base_scenario_closed_form_sens': only yo be included for base scenario.
+      '''
+      self.base_scenario_dict = base_scenario_dict
+      self.test_scenario_dict = test_scenario_dict
+
+      self.diff_learning_scaler = diff_learning_scaler
+      self.base_scenario_adj_option = base_scenario_adj_option
+
+      self.ks_stat = []
+      self.rank_corr = []
+      self.count_show = count_show
+      self.batch_count = 0 
+      
+
+    def on_batch_end(self, epoch, logs=None):
+        
+        if (self.batch_count % self.count_show) == 0:
+          model_predict_test_y = self.diff_learning_scaler.predict(self.test_scenario_dict['scenario'], batch_size = len(self.test_scenario_dict['scenario']))['y']
+
+          
+          if  (self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV) or \
+                (self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS):
+            
+            base_scen_predict = self.diff_learning_scaler.predict(self.base_scenario_dict['scenario'], batch_size = 1)
+
+            base_scen_y = base_scen_predict['y']
+            
+            base_scen_sens = base_scen_predict['sens']
+
+          if self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV:
+
+            model_adj_base = -base_scen_y
+
+          else:
+
+            model_adj_base = 0.0
+            
+
+          if (self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS):
+              # If adjustment option includes sensibilities
+              # Compute model sensitivities for base scenario
+              model_adj_base_sens_test = np.matmul(self.scenario_dict['scenario']-self.base_scenario_dict['scenario'],
+                                                  (self.base_scenario_dict['base_scenario_closed_form_sens'] - base_scen_sens).T).flatten()
+          else:
+              model_adj_base_sens_test = 0.0
+
+
+          # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for historical scenarios
+          spearman_test, _ = spearmanr(model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj'], self.test_scenario_dict['closed_formula_plus_adj'])
+          ks_hist_test, _ = ks_2samp(model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj'], self.test_scenario_dict['closed_formula_plus_adj'])
+
+          self.ks_stat += [ks_hist_test]
+          self.rank_corr += [spearman_test]
+
+          # Miscellanea.plot_plat_charts(model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj'], self.test_scenario_dict['closed_formula_plus_adj'])
+        
+        self.batch_count += 1

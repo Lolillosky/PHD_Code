@@ -1,5 +1,8 @@
 import os, shutil
 import matplotlib.pyplot as plt
+from scipy.stats import spearmanr
+from scipy.stats import ks_2samp
+from scipy.stats import rankdata
 
 def delete_content_of_folder(folder):
     '''
@@ -140,10 +143,66 @@ def shuffle_arrays_in_dict(my_dict, random_state=None):
         
     return my_dict_copy
 
-    # Example usage:
-    # data = {'a': np.array([1, 2, 3]), 'b': np.array([4, 5, 6])}
-    # shuffled_data = shuffle_arrays_in_dict(data)
-    # print(shuffled_data)
+
+
+
+def plot_plat_charts(hpl, rtpl, fig_tittle = ''):
+    """
+    Plots comparison charts for given HPL 
+    and RTPL data.
+    Both cum probability and rank correlation plots.
+    
+    Parameters:
+    - hpl: List or array of HPL data.
+    - rtpl: List or array of RTPL data.
+    - fig_tittle: Tittle of the whole figure
+
+    
+    Returns:
+    - fig: A Matplotlib figure containing two subplots.
+    """
+    
+    # Create a new figure with two subplots side by side
+    fig, ax = plt.subplots(1, 2)
+    
+    # First subplot: Cumulative histogram for HPL and RTPL
+    ax[0].hist([hpl, rtpl], density=True, histtype="step", cumulative=True, bins=np.unique(np.sort(np.concatenate([hpl, rtpl]))), 
+               label=['HPL', 'RTPL'])
+    ax[0].legend(loc='upper left')
+    ax[0].set_xlabel('PL')
+    ax[0].set_ylabel('Cumulative Probability')
+    
+    ax[0].set_title('KS statistic: ' + format(ks_2samp(hpl, rtpl)[0], '0.4f'))
+
+    # Second subplot: Scatter plot of ranked HPL versus RTPL
+    ax[1].plot(rankdata(hpl), rankdata(rtpl), '.')
+    ax[1].set_xlabel('HPL Rank')
+    ax[1].set_ylabel('RTPL Rank')
+    
+    ax[1].set_title('Rank Correlation:' +  format(spearmanr(hpl, rtpl)[0], '0.4f'))
+    # Set figure size
+    fig.set_size_inches(13, 5)
+    
+    fig.suptitle(fig_tittle)
+    # Return the figure object
+    return fig
+
+
+      
+
+
+
+
+
+    
+
+
+
+
+
+
+
+
 
 
 

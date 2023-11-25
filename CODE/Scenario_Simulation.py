@@ -1,21 +1,10 @@
 import numpy as np
 from numpy.linalg import cholesky
-from enum import Enum
 import tensorflow as tf
 from sklearn.mixture import GaussianMixture
 from sklearn.utils import shuffle  
+import Enums
 
-class MktRisk_Scenarios_Generation_Option(Enum):
-    EXPONENTIAL = 1
-    LINEAR = 2
-
-class Include_Tensorflow_Calcs_option(Enum):
-    YES = 1
-    NO = 2
-
-class Simulate_Var_Red_Payoff(Enum):
-    YES = 1
-    NO = 2
 
 
 class GaussianModel:
@@ -125,11 +114,11 @@ def generate_mkt_risk_scenarios_levels(base_scenario, scenario_shifts, generatio
         raise ValueError("Number of risk factors in base_scenario doesn't match with the columns in scenario_shifts.")
 
     # Exponential simulation
-    if generation_option == MktRisk_Scenarios_Generation_Option.EXPONENTIAL:
+    if generation_option == Enums.MktRisk_Scenarios_Generation_Option.EXPONENTIAL:
         return base_scenario * np.exp(scenario_shifts)
     
     # Linear simulation
-    elif generation_option == MktRisk_Scenarios_Generation_Option.LINEAR:
+    elif generation_option == Enums.MktRisk_Scenarios_Generation_Option.LINEAR:
         return base_scenario + scenario_shifts
 
     # Handle unexpected generation_option
@@ -163,13 +152,13 @@ def simulate_product_discounted_payoff(mkt_risk_scenario_levels, spot_indexes, v
 
     brow_correl = np.matmul(brow_ind, chol.T)
 
-    if tf_option == Include_Tensorflow_Calcs_option.NO:
+    if tf_option == Enums.Include_Tensorflow_Calcs_option.NO:
 
         spots_t = mkt_risk_scenario_levels[:, spot_indexes] * np.exp((rfr - divs - 0.5 *mkt_risk_scenario_levels[:, vol_indexes]**2) * ttm + mkt_risk_scenario_levels[:, vol_indexes] * brow_correl)
 
         return payoff(spots_t)*np.exp(-rfr*ttm)
 
-    elif tf_option == Include_Tensorflow_Calcs_option.YES:
+    elif tf_option == Enums.Include_Tensorflow_Calcs_option.YES:
     
         spots_t = mkt_risk_scenario_levels[:, spot_indexes] * tf.exp((rfr - divs - 0.5 *mkt_risk_scenario_levels[:, vol_indexes]**2) * ttm + mkt_risk_scenario_levels[:, vol_indexes] * brow_correl)
 
@@ -188,9 +177,9 @@ def basket_option(spots_t, indiv_strikes, option_strike, tf_option):
     - np.ndarray or tf.Tensor: Calculated option payoffs.
     """
 
-    if tf_option == Include_Tensorflow_Calcs_option.YES:
+    if tf_option == Enums.Include_Tensorflow_Calcs_option.YES:
         return tf.maximum(tf.exp(tf.reduce_mean(tf.math.log(spots_t/indiv_strikes), axis=1)) - option_strike, 0)
-    elif tf_option == Include_Tensorflow_Calcs_option.NO:
+    elif tf_option == Enums.Include_Tensorflow_Calcs_option.NO:
         return np.maximum(np.exp(np.mean(np.log(spots_t/indiv_strikes), axis=1)) - option_strike, 0)
     else:
         raise ValueError("Invalid value for tf_option.")
@@ -236,7 +225,7 @@ def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenari
                                                              generation_option=simulation_dict['shocks_generation_option'])
     
     # Check for TensorFlow calculations inclusion option and perform calculations accordingly
-    if simulation_dict['tf_generation_option'] == Include_Tensorflow_Calcs_option.YES:
+    if simulation_dict['tf_generation_option'] == Enums.Include_Tensorflow_Calcs_option.YES:
         sim_scenario_levels_TF = tf.constant(sim_scenario_levels)
 
         with tf.GradientTape() as tape:
@@ -252,7 +241,7 @@ def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenari
                                                                    payoff=contract_data_dict['payoff'],
                                                                    tf_option=simulation_dict['tf_generation_option'])
             
-            if simulation_dict['Simulate_Var_Red_Payoff'] == Simulate_Var_Red_Payoff.YES:
+            if simulation_dict['Simulate_Var_Red_Payoff'] == Enums.Simulate_Var_Red_Payoff.YES:
 
                 base_scenario_repeated = np.repeat(base_scenario.reshape(1,-1), simulation_dict['number_of_scenarios'], axis = 0)
 
@@ -274,7 +263,7 @@ def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenari
         pathwise_derivs = tape.gradient(discounted_payoff, sim_scenario_levels_TF).numpy()
         discounted_payoff = discounted_payoff.numpy() 
 
-    elif simulation_dict['tf_generation_option'] == Include_Tensorflow_Calcs_option.NO:
+    elif simulation_dict['tf_generation_option'] == Enums.Include_Tensorflow_Calcs_option.NO:
         discounted_payoff = simulate_product_discounted_payoff(mkt_risk_scenario_levels=sim_scenario_levels,
                                                                spot_indexes=base_scenario_dict['spot_indexes'], 
                                                                vol_indexes=base_scenario_dict['vol_indexes'],
@@ -286,7 +275,7 @@ def calibrate_hist_data_simulate_training_data(gaussian_model_dict, base_scenari
                                                                payoff=contract_data_dict['payoff'],
                                                                tf_option=simulation_dict['tf_generation_option'])
         
-        if simulation_dict['Simulate_Var_Red_Payoff'] == Simulate_Var_Red_Payoff.YES:
+        if simulation_dict['Simulate_Var_Red_Payoff'] == Enums.Simulate_Var_Red_Payoff.YES:
 
             base_scenario_repeated = np.repeat(base_scenario.reshape(1,-1), simulation_dict['number_of_scenarios'], axis = 0)
 

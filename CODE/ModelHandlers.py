@@ -10,6 +10,7 @@ from sklearn.metrics import r2_score
 from scipy.stats import spearmanr
 from scipy.stats import ks_2samp 
 import matplotlib.pyplot as plt
+import Enums
 
 
 def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, hidden_activ_func, sim_scenarios_train, payoff_train, sens_train, epochs ,batch_size, valid_data = None):
@@ -187,13 +188,13 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
         mse_cv = mean_squared_error(y_pred_cv, payoff_cv)
 
         
-        if (base_scenario_adj_option == 'NPV') or (base_scenario_adj_option == 'NPV_plus_sens'):
+        if (base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV) or (base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS):
             # We calculate the estimate for the base scenario
             model_adj_base = - model.predict(test_scenarios_data[0]['scenario'], batch_size = 1)['y']
         else:
             model_adj_base = 0.0
 
-        if (base_scenario_adj_option == 'NPV_plus_sens'):
+        if (base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS):
             # If adjustment option includes sensibilities
             # Compute model sensitivities for base scenario
             model_sens_base_scenario = model.predict(test_scenarios_data[0]['scenario'], batch_size = 1)['sens']
@@ -236,7 +237,7 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
             # Predict model for historical scenarios
             y_pred_test = model.predict(test_scenarios_data[i]['scenario'], batch_size = len(test_scenarios_data[i]['scenario']))['y']
 
-            if (base_scenario_adj_option == 'NPV_plus_sens'):
+            if (base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS):
                 # If adjustment option includes sensibilities
                 # Compute model sensitivities for base scenario
                 model_adj_base_sens_test = np.matmul(test_scenarios_data[i]['scenario']-test_scenarios_data[0]['scenario'],(test_scenarios_data[0]['base_scenario_closed_form_sens'] - model_sens_base_scenario).T).flatten()
@@ -251,9 +252,9 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
             results_dict['spearman_' + test_scenarios_data[i]['scenario_name']] = spearman_test
             results_dict['ks_' + test_scenarios_data[i]['scenario_name']] = ks_hist_test
 
-            results_dict['cv_scenarios_closed_form' + test_scenarios_data[i]['scenario_name']] =  test_scenarios_data[i]['closed_formula_plus_adj']
+            results_dict['cv_scenarios_closed_form_' + test_scenarios_data[i]['scenario_name']] =  test_scenarios_data[i]['closed_formula_plus_adj']
 
-            results_dict['cv_scenarios_model_results_plus_adjustments' + test_scenarios_data[i]['scenario_name']] = y_pred_test + model_adj_base + model_adj_base_sens_test + test_scenarios_data[i]['model_adj']
+            results_dict['cv_scenarios_model_results_plus_adjustments_' + test_scenarios_data[i]['scenario_name']] = y_pred_test + model_adj_base + model_adj_base_sens_test + test_scenarios_data[i]['model_adj']
             
 
         # Clear the output to keep the notebook clean
@@ -284,7 +285,7 @@ def compute_model_metrics(models, alphas, cells_layer, num_hidden_layers, sim_sc
     return metrics, metrics[mse_keys[np.argmin(mse_list)]], metrics[mse_keys_zero_alpha[np.argmin(mse_list_zero_alpha)]]
 
 
-def plot_model_results(metrics, best_model_metrics, alphas, cells_layer, num_hidden_layers, test_scenario_names, bayes_error_cv,
+def plot_model_results(metrics, best_model_metrics, best_model_zero_alpha_metrics,alphas, cells_layer, num_hidden_layers, test_scenario_names, bayes_error_cv,
                        file_name, chart_name, chart_sub_name_FRTB, PATH_FIGS):
 
     plot_results = {}
@@ -473,14 +474,30 @@ def plot_model_results(metrics, best_model_metrics, alphas, cells_layer, num_hid
 
             plt.savefig(PATH_FIGS + file_name + 'KS_' + test + '.pdf',bbox_inches ='tight')
 
-        plt.figure();
-      
+        plt.figure()
 
+    f = Miscellanea.plot_plat_charts(best_model_metrics['cv_scenarios_closed_form'], best_model_metrics['cv_scenarios_model_results_plus_adjustments'], 
+                                     fig_tittle= 'Best model PLAT in cv')
 
+    f.savefig(PATH_FIGS + file_name + 'Best_difflearn_model_PLAT_cv.pdf',bbox_inches ='tight')
 
+    f = Miscellanea.plot_plat_charts(best_model_zero_alpha_metrics['cv_scenarios_closed_form'], best_model_zero_alpha_metrics['cv_scenarios_model_results_plus_adjustments'], 
+                                     fig_tittle= r'Best model ($\lambda = 0$) PLAT in cv')
 
+    f.savefig(PATH_FIGS + file_name + 'Best_traditional_model_PLAT_cv.pdf',bbox_inches ='tight')
 
-    
+    for test in test_scenario_names:
+
+        f = Miscellanea.plot_plat_charts(best_model_metrics['cv_scenarios_closed_form_' + test], best_model_metrics['cv_scenarios_model_results_plus_adjustments_' + test], 
+                                     fig_tittle= 'Best model PLAT ' + test + ' schocks')
+
+        f.savefig(PATH_FIGS + file_name + 'Best_difflearn_model_PLAT_' + test + '.pdf',bbox_inches ='tight')
+
+        f = Miscellanea.plot_plat_charts(best_model_zero_alpha_metrics['cv_scenarios_closed_form_' + test], best_model_zero_alpha_metrics['cv_scenarios_model_results_plus_adjustments_' + test], 
+                                        fig_tittle= r'Best model ($\lambda = 0$) PLAT ' + test + ' schocks')
+
+        f.savefig(PATH_FIGS + file_name + 'Best_traditional_model_PLAT_' + test + '.pdf',bbox_inches ='tight')
+
 
 
 
