@@ -421,8 +421,8 @@ class Plat_Callback(tf.keras.callbacks.Callback):
         - 'model_adj': array of model adjustments not dependent on base scenario. See comments above.
         - 'base_scenario_closed_form_sens': only yo be included for base scenario.
       '''
-      self.base_scenario_dict = base_scenario_dict
-      self.test_scenario_dict = test_scenario_dict
+      self.base_scenario_dict = base_scenario_dict.copy()
+      self.test_scenario_dict = test_scenario_dict.copy()
 
       self.diff_learning_scaler = diff_learning_scaler
       self.base_scenario_adj_option = base_scenario_adj_option
@@ -431,11 +431,20 @@ class Plat_Callback(tf.keras.callbacks.Callback):
       self.rank_corr = []
       self.count_show = count_show
       self.batch_count = 0 
+      self.output_dict = {}
+
+      self.output_dict['ks_stat'] = []
+      self.output_dict['rank_corr'] = []
+      self.output_dict['y_true'] = []
+      self.output_dict['y_pred'] = []
+      
+  
       
 
     def on_batch_end(self, epoch, logs=None):
         
         if (self.batch_count % self.count_show) == 0:
+
           model_predict_test_y = self.diff_learning_scaler.predict(self.test_scenario_dict['scenario'], batch_size = len(self.test_scenario_dict['scenario']))['y']
 
           
@@ -448,30 +457,35 @@ class Plat_Callback(tf.keras.callbacks.Callback):
             
             base_scen_sens = base_scen_predict['sens']
 
-          if self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV:
-
             model_adj_base = -base_scen_y
-
+          
           else:
 
             model_adj_base = 0.0
             
+            
 
           if (self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS):
-              # If adjustment option includes sensibilities
-              # Compute model sensitivities for base scenario
-              model_adj_base_sens_test = np.matmul(self.scenario_dict['scenario']-self.base_scenario_dict['scenario'],
+           
+              model_adj_base_sens_test = np.matmul(self.test_scenario_dict['scenario']-self.base_scenario_dict['scenario'],
                                                   (self.base_scenario_dict['base_scenario_closed_form_sens'] - base_scen_sens).T).flatten()
           else:
               model_adj_base_sens_test = 0.0
 
-
+          y_true = self.test_scenario_dict['closed_formula_plus_adj']
+          y_pred = model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj']
           # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for historical scenarios
-          spearman_test, _ = spearmanr(model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj'], self.test_scenario_dict['closed_formula_plus_adj'])
-          ks_hist_test, _ = ks_2samp(model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj'], self.test_scenario_dict['closed_formula_plus_adj'])
+          spearman_test, _ = spearmanr(y_pred, y_true)
+          ks_hist_test, _ = ks_2samp(y_pred, y_true)
 
-          self.ks_stat += [ks_hist_test]
-          self.rank_corr += [spearman_test]
+          self.output_dict['ks_stat'] += [ks_hist_test]
+          self.output_dict['rank_corr'] += [spearman_test]
+
+          self.output_dict['y_true'] += [y_true]
+          self.output_dict['y_pred'] += [y_pred]
+  
+
+
 
           # Miscellanea.plot_plat_charts(model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj'], self.test_scenario_dict['closed_formula_plus_adj'])
         
