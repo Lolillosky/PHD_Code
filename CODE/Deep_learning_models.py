@@ -223,7 +223,7 @@ class Diff_learning_scaler:
 
     return {'X_scaled': X_scaled, 'y_scaled': y_scaled, 'dydX_scaled': dydX_scaled}
 
-  def fit(self, X, y, dydX, batch_size= 32, epochs= 20, validation_data = None, plat_callback = None):
+  def fit(self, X, y, dydX, batch_size= 32, epochs= 20, validation_data = None, plat_callback = None, verbose = 0):
 
     '''
     Inputs:
@@ -266,7 +266,7 @@ class Diff_learning_scaler:
 
       
       return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=callbacks,
-                validation_data = (scaled_data_val['X_scaled'], y_to_model_val))
+                validation_data = (scaled_data_val['X_scaled'], y_to_model_val), verbose = verbose)
 
     else:
 
@@ -278,13 +278,14 @@ class Diff_learning_scaler:
 
       self.diff_learning_model.compile(optimizer = 'adam', loss = self.loss)
 
-      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=callbacks)
+      return self.diff_learning_model.fit(scaled_data['X_scaled'], y_to_model, batch_size, epochs, shuffle= False, callbacks=callbacks, 
+                                           verbose = verbose)
 
-  def predict(self, X, batch_size = 32):
+  def predict(self, X, batch_size = 32, verbose = 0):
 
     X_scaled = (X - self.X_mu) / self.X_sigma 
 
-    y_sens_scaled_predicted = self.diff_learning_model.predict(X_scaled, batch_size = batch_size)
+    y_sens_scaled_predicted = self.diff_learning_model.predict(X_scaled, batch_size = batch_size, verbose = verbose)
 
     y = self.y_mu +  y_sens_scaled_predicted[:,0]*self.y_sigma
 

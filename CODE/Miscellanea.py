@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 from scipy.stats import ks_2samp
 from scipy.stats import rankdata
+import plotly.graph_objs as go
+from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
 
 def delete_content_of_folder(folder):
     '''
@@ -186,6 +188,83 @@ def plot_plat_charts(hpl, rtpl, fig_tittle = ''):
     fig.suptitle(fig_tittle)
     # Return the figure object
     return fig
+
+
+def plot_points_predict(simul_results,XY_labels ,save_path_file=None):
+    """
+    Generates and optionally saves a 3D plot of simulation results.
+
+    This function creates a 3D plot using Plotly, visualizing the data points and
+    the model's predictions based on the input simulation results. 
+
+    Parameters:
+    simul_results (dict): A dictionary containing 'X1', 'X2', 'Y', and 'model' keys.
+                          'X1' and 'X2' are lists or arrays of data points, 'Y' is the 
+                          corresponding output, and 'model' is the trained model.
+    save_path (str, optional): Path where the HTML output of the plot will be saved and file name. 
+                               If not provided, the plot is not saved to a file.
+
+    Returns:
+    None
+    """
+
+    # Determine the range of X1 and X2 values
+    x1_min, x1_max = np.min(simul_results['X1']), np.max(simul_results['X1'])
+    x2_min, x2_max = np.min(simul_results['X2']), np.max(simul_results['X2'])
+
+    # Generate a mesh grid for X1 and X2 values
+    X1_Grid, X2_Grid = np.meshgrid(np.linspace(x1_min, x1_max, 100), 
+                                   np.linspace(x2_min, x2_max, 100))
+
+    # Initialize the grid for model predictions
+    Y_Grid = np.zeros((100, 100))
+
+    # Populate Y_Grid with model predictions for each point in the grid
+    for i in range(100):
+        for j in range(100):
+            Y_Grid[i, j] = np.exp(simul_results['model'].score_samples([[X1_Grid[i, j], X2_Grid[i, j]]]))
+
+    # Create lines for the 3D plot
+    lines = [go.Scatter3d(x=i, y=j, z=k, mode='lines', line=dict(color='rgb(50, 50, 255)', width=1))
+             for i, j, k in zip(X1_Grid, X2_Grid, Y_Grid)]
+    lines += [go.Scatter3d(x=i, y=j, z=k, mode='lines', line=dict(color='rgb(50, 50, 255)', width=1))
+              for i, j, k in zip(X1_Grid.T, X2_Grid.T, Y_Grid.T)]
+
+    # Add the 3D scatter plot of actual data points
+    trace1 = go.Scatter3d(
+        x=simul_results['X1'],
+        y=simul_results['X2'],
+        z=simul_results['Y'],
+        mode='markers',
+        marker=dict(
+            size=2,
+            color=simul_results['Y'],  # Color by the Y values
+            colorscale='Portland',     # Choose a colorscale
+            opacity=1.0
+        )
+    )
+    lines.append(trace1)
+
+    # Define the layout of the plot
+    layout = go.Layout(
+        scene=dict(
+            xaxis=dict(title=XY_labels[0], color='black'),
+            yaxis=dict(title=XY_labels[1], color='black'),
+            zaxis=dict(title='Density', color='black'),
+        ),
+        width=700,
+        margin=dict(r=20, b=10, l=10, t=10),
+        showlegend=False,
+    )
+
+    # Generate the figure
+    fig = go.Figure(data=lines, layout=layout)
+    iplot(fig, filename='elevations-3d-surface')
+
+    # Save the plot as HTML if a save path is provided
+    if save_path_file:
+        fig.write_html(save_path_file)
+  
 
 
       
