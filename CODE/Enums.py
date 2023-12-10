@@ -20,4 +20,9 @@ class Base_Scenario_Adj_Option(Enum):
     NPV_PLUS_SENS = 3
 
 
+class Plat_Analysis_Option(Enum):
+    NAIVE = 1
+    VAR_REDUCTION = 2
+    CONVEXITY = 3
+    
     

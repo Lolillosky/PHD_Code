@@ -422,8 +422,9 @@ class Plat_Callback(tf.keras.callbacks.Callback):
         - 'model_adj': array of model adjustments not dependent on base scenario. See comments above.
         - 'base_scenario_closed_form_sens': only yo be included for base scenario.
       '''
-      self.base_scenario_dict = base_scenario_dict.copy()
-      self.test_scenario_dict = test_scenario_dict.copy()
+      self.base_scenario_dict = Miscellanea.deep_copy_dict_with_arrays(base_scenario_dict)
+      self.test_scenario_dict = Miscellanea.deep_copy_dict_with_arrays(test_scenario_dict)
+
 
       self.diff_learning_scaler = diff_learning_scaler
       self.base_scenario_adj_option = base_scenario_adj_option
@@ -438,6 +439,8 @@ class Plat_Callback(tf.keras.callbacks.Callback):
       self.output_dict['rank_corr'] = []
       self.output_dict['y_true'] = []
       self.output_dict['y_pred'] = []
+      self.output_dict['batch_count'] = []
+      
       
   
       
@@ -484,9 +487,8 @@ class Plat_Callback(tf.keras.callbacks.Callback):
 
           self.output_dict['y_true'] += [y_true]
           self.output_dict['y_pred'] += [y_pred]
+          self.output_dict['batch_count'] += [self.batch_count + 1]
   
-
-
 
           # Miscellanea.plot_plat_charts(model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj'], self.test_scenario_dict['closed_formula_plus_adj'])
         

@@ -498,6 +498,132 @@ def plot_model_results(metrics, best_model_metrics, best_model_zero_alpha_metric
 
         f.savefig(PATH_FIGS + file_name + 'Best_traditional_model_PLAT_' + test + '.pdf',bbox_inches ='tight')
 
+def PLAT_Analysis(base_scenario_dict, test_scenario_dict, train_scenario_dict, model_dict, plat_dict):
+    """
+    Performs PLAT analysis using deep learning models.
+
+    This function builds a deep learning model based on specified parameters, prepares scenario data for
+    base and test cases, and then fits the model to the training data. It uses various callbacks to adjust
+    the scenarios based on different analysis options, and returns a dictionary of these callbacks.
+
+    Parameters:
+    base_scenario_dict (dict): Dictionary containing the base scenario data.
+        Keys:
+        - 'scenario_levels': Scenario levels for the base case.
+        - 'closed_form_sens': Sensitivity analysis data for the base scenario.
+        - 'closed_form_value': Closed form value for the base scenario (used in test scenario adjustments).
+        - 'hedge_NPV': (if applicable) Net present value for the base scenario hedge.
+
+    test_scenario_dict (dict): Dictionary containing the test scenario data.
+        Keys:
+        - 'scenario_name': Name of the test scenario.
+        - 'scenario_levels': Scenario levels for the test case.
+        - 'closed_form_value': Closed form value for the test scenario.
+        - 'hedge_NPV': (if applicable) Net present value for the test scenario hedge.
+
+    train_scenario_dict (dict): Dictionary containing the training scenario data.
+        Keys:
+        - 'scenario_levels': Scenario levels for training.
+        - 'payoff': Payoff data for training.
+        - 'pathwise_derivs': Pathwise derivatives for training.
+
+    model_dict (dict): Dictionary containing model configuration parameters.
+        Keys:
+        - 'input_dim': Input dimension for the model.
+        - 'num_hidden_layers': Number of hidden layers in the model.
+        - 'num_cells_hidden_layers': Number of cells in each hidden layer.
+        - 'hidden_layer_activation': Activation function for hidden layers.
+        - 'output_layer_activation': Activation function for the output layer.
+        - 'alpha': Learning rate.
+        - 'batch_size': Batch size for training.
+        - 'num_epochs': Number of epochs for training.
+        - 'verbose': Verbosity mode.
+
+    plat_dict (dict): Dictionary containing PLAT analysis options and parameters.
+        Keys:
+        - 'plat_analysis_option': Selected option for PLAT analysis (e.g., NAIVE).
+        - 'num_batches_callback': Number of batches for the callback.
+
+    Returns:
+    dict: A dictionary of PLAT callbacks for different analysis scenarios, including those for 
+    'NO', 'NPV', 'SENS', 'Hedge_NO', 'Hedge_NPV', and 'Hedge_SENS' adjustments.
+    """
+
+    # [The function implementation remains the same as in your updated code]
+
+    model = Deep_learning_models.build_diff_learning_model(model_dict['input_dim'],
+            model_dict['num_hidden_layers'],
+            model_dict['num_cells_hidden_layers'],
+            model_dict['hidden_layer_activation'],
+            model_dict['output_layer_activation'],
+            model_dict['alpha'])
+
+    base_scenario_data = {'scenario_name': 'base', 'scenario': base_scenario_dict['scenario_levels'],
+                        'base_scenario_closed_form_sens': base_scenario_dict['closed_form_sens']}
+    
+    test_scenario_data = {'scenario_name': test_scenario_dict['scenario_name'],
+            'scenario': test_scenario_dict['scenario_levels'],
+            'closed_formula_plus_adj': test_scenario_dict['closed_form_value'] - base_scenario_dict['closed_form_value'],
+            'model_adj': 0} 
+                      
+    if plat_dict['plat_analysis_option'] == Enums.Plat_Analysis_Option.NAIVE:
+        
+        test_scenario_data['model_adj'] += - base_scenario_dict['closed_form_value']
+
+    plat_callback_NO =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
+        Enums.Base_Scenario_Adj_Option.NO, plat_dict['num_batches_callback'])
+
+    test_scenario_data['model_adj'] = 0.0 
+
+    plat_callback_NPV =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
+        Enums.Base_Scenario_Adj_Option.NPV, plat_dict['num_batches_callback'])
+
+    plat_callback_SENS =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
+        Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS, plat_dict['num_batches_callback'])
+    
+    test_scenario_data['closed_formula_plus_adj'] += test_scenario_dict['hedge_NPV'] - base_scenario_dict['hedge_NPV']
+
+    if plat_dict['plat_analysis_option'] == Enums.Plat_Analysis_Option.NAIVE:
+        
+        test_scenario_data['model_adj'] += - base_scenario_dict['closed_form_value']
+    
+    test_scenario_data['model_adj'] += test_scenario_dict['hedge_NPV'] - base_scenario_dict['hedge_NPV']
+
+    plat_callback_Hedge_NO =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
+        Enums.Base_Scenario_Adj_Option.NO, plat_dict['num_batches_callback'])
+
+    test_scenario_data['model_adj'] = test_scenario_dict['hedge_NPV'] - base_scenario_dict['hedge_NPV']
+
+    plat_callback_Hedge_NPV =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
+        Enums.Base_Scenario_Adj_Option.NPV, plat_dict['num_batches_callback'])
+
+    plat_callback_Hedge_SENS =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
+        Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS, plat_dict['num_batches_callback'])
+
+
+    
+    model.fit(train_scenario_dict['scenario_levels'],
+            train_scenario_dict['payoff'],
+            train_scenario_dict['pathwise_derivs'], model_dict['batch_size'],
+            model_dict['num_epochs'], None,
+            [plat_callback_NO, plat_callback_NPV, plat_callback_SENS,
+            plat_callback_Hedge_NO, plat_callback_Hedge_NPV, plat_callback_Hedge_SENS],
+            model_dict['verbose'])
+
+
+    return {
+    "plat_callback_NO": plat_callback_NO,
+    "plat_callback_NPV": plat_callback_NPV,
+    "plat_callback_SENS": plat_callback_SENS,
+    "plat_callback_Hedge_NO": plat_callback_Hedge_NO,
+    "plat_callback_Hedge_NPV": plat_callback_Hedge_NPV,
+    "plat_callback_Hedge_SENS": plat_callback_Hedge_SENS}
+
+              
+
+
+
+
 
 
 

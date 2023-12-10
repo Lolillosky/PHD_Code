@@ -5,6 +5,9 @@ from scipy.stats import ks_2samp
 from scipy.stats import rankdata
 import plotly.graph_objs as go
 from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
+import matplotlib.animation as animation
+import copy
+
 
 def delete_content_of_folder(folder):
     '''
@@ -148,7 +151,7 @@ def shuffle_arrays_in_dict(my_dict, random_state=None):
 
 
 
-def plot_plat_charts(hpl, rtpl, fig_tittle = ''):
+def plot_plat_charts(hpl, rtpl, fig_ax_list = None, fig_tittle = ''):
     """
     Plots comparison charts for given HPL 
     and RTPL data.
@@ -164,11 +167,16 @@ def plot_plat_charts(hpl, rtpl, fig_tittle = ''):
     - fig: A Matplotlib figure containing two subplots.
     """
     
-    # Create a new figure with two subplots side by side
-    fig, ax = plt.subplots(1, 2)
-    
+    if fig_ax_list is None:
+        # Create a new figure with two subplots side by side
+        fig, ax = plt.subplots(1, 2)
+    else:
+        fig = fig_ax_list[0]
+        ax = fig_ax_list[1]
+        
     # First subplot: Cumulative histogram for HPL and RTPL
-    ax[0].hist([hpl, rtpl], density=True, histtype="step", cumulative=True, bins=np.unique(np.sort(np.concatenate([hpl, rtpl]))), 
+    ax[0].hist([hpl, rtpl], density=True, histtype="step", cumulative=True, 
+               bins=np.unique(np.sort(hpl)), 
                label=['HPL', 'RTPL'])
     ax[0].legend(loc='upper left')
     ax[0].set_xlabel('PL')
@@ -264,7 +272,54 @@ def plot_points_predict(simul_results,XY_labels ,save_path_file=None):
     # Save the plot as HTML if a save path is provided
     if save_path_file:
         fig.write_html(save_path_file)
-  
+
+
+def animate_plat_evolution(plat_results, chart_title = "", path_file = None):
+    
+    # Create a figure for the animation
+    fig, ax = plt.subplots(1,2)
+
+    # Animation update function
+    def update(frame):
+        # Clear the current axes
+        ax[0].clear()
+        ax[1].clear()
+
+
+        # Select the data for the current frame
+        hpl = plat_results.output_dict['y_true'][frame]
+        rtpl = plat_results.output_dict['y_pred'][frame]
+
+        # Call your plot function
+        plot_plat_charts(hpl, rtpl,fig_ax_list = [fig, ax],
+            fig_tittle=chart_title + f"Plat statistics after minibatch {plat_results.output_dict['batch_count'][frame]}")
+
+    # Create the animation
+    ani = animation.FuncAnimation(fig, update, frames=len(plat_results.output_dict['y_true']), repeat=True)
+
+    plt.close()
+
+    # return(ani)
+
+    html_output = ani.to_jshtml()
+
+    if path_file is not None:
+
+        with open(path_file, 'w') as file:
+            file.write(html_output)
+
+    return html_output
+
+def deep_copy_dict_with_arrays(original_dict):
+    # Create a deep copy of the dictionary
+    copied_dict = copy.deepcopy(original_dict)
+
+    # Make sure to create deep copies of np.arrays
+    for key, value in copied_dict.items():
+        if isinstance(value, np.ndarray):
+            copied_dict[key] = np.copy(value)
+
+    return copied_dict
 
 
       
