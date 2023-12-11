@@ -406,7 +406,7 @@ def plot_model_results(metrics, best_model_metrics, best_model_zero_alpha_metric
 
         
         plt.xticks(ticks = range(len(alphas)),labels = alphas)
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
         plt.xlabel(r'Diff. machine learning $\alpha$');
         plt.ylabel(r'Kolmogorov-Smirnov statistic CV');   
 
@@ -465,7 +465,7 @@ def plot_model_results(metrics, best_model_metrics, best_model_zero_alpha_metric
 
             
             plt.xticks(ticks = range(len(alphas)),labels = alphas)
-            plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
             plt.xlabel(r'Diff. machine learning $\alpha$');
             plt.ylabel(r'Kolmogorov-Smirnov statistic ' + test);   
             plt.ylim(0.0,0.3)
