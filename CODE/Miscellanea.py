@@ -189,7 +189,7 @@ def plot_plat_charts(hpl, rtpl, fig_ax_list = None, fig_tittle = ''):
     ax[1].set_xlabel('HPL Rank')
     ax[1].set_ylabel('RTPL Rank')
     
-    ax[1].set_title('Rank Correlation:' +  format(spearmanr(hpl, rtpl)[0], '0.4f'))
+    ax[1].set_title('Rank Correlation: ' +  format(spearmanr(hpl, rtpl)[0], '0.4f'))
     # Set figure size
     fig.set_size_inches(13, 5)
     
