@@ -7,6 +7,8 @@ import plotly.graph_objs as go
 from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
 import matplotlib.animation as animation
 import copy
+from plotly.subplots import make_subplots
+
 
 
 def delete_content_of_folder(folder):
@@ -320,6 +322,112 @@ def deep_copy_dict_with_arrays(original_dict):
             copied_dict[key] = np.copy(value)
 
     return copied_dict
+
+
+def plot_plat_training(plat_results_list, plat_names_list, path_file_name = None):
+    
+    f, ax = plt.subplots(1,2, figsize = (10,4))
+    
+    for plat_result, plat_name in zip(plat_results_list, plat_names_list):
+    
+        ax[0].plot(plat_result.output_dict['batch_count'], plat_result.output_dict['ks_stat'], '.-',label = plat_name)
+        ax[1].plot(plat_result.output_dict['batch_count'], plat_result.output_dict['rank_corr'], '.-', label = plat_name)
+        
+    ax[0].legend()
+    ax[1].legend()
+    
+    ax[1].axhline(y = 0.80, color = 'yellow', linestyle = ':')
+    ax[1].axhline(y = 0.70, color = 'red', linestyle = ':')
+    
+    ax[0].axhline(y = 0.09, color = 'yellow', linestyle = ':')
+    ax[0].axhline(y = 0.12, color = 'red', linestyle = ':')
+    
+    if path_file_name is not None:
+        
+        plt.savefig(path_file_name)
+    
+
+def plot_plat_training_plotly(plat_results_list, plat_names_list, path_file_name_html=None,path_file_name_pdf = None):
+    # Define a list of colors
+    colors = ['blue', 'green', 'red', 'orange', 'purple', 'brown']  # Add more colors if needed
+
+    # Creating subplots
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("KS Statistic", "Rank Correlation"))
+
+    for i, (plat_result, plat_name) in enumerate(zip(plat_results_list, plat_names_list)):
+        # Select color from the list
+        color = colors[i % len(colors)]
+
+        # KS Statistic plot
+        fig.add_trace(
+            go.Scatter(x=plat_result.output_dict['batch_count'], y=plat_result.output_dict['ks_stat'], 
+                       mode='lines', name=plat_name + ' ks', line=dict(color=color, width=2), 
+                       marker=dict(size=7)),
+            row=1, col=1
+        )
+
+        # Rank Correlation plot
+        fig.add_trace(
+            go.Scatter(x=plat_result.output_dict['batch_count'], y=plat_result.output_dict['rank_corr'], 
+                       mode='lines', name=plat_name + ' rank corr', line=dict(color=color, width=2), 
+                       marker=dict(size=7)),
+            row=1, col=2
+        )
+
+    # Adding horizontal lines for reference
+    fig.add_hline(y=0.80, line_dash="dot", line_color="yellow", row=1, col=2)
+    fig.add_hline(y=0.70, line_dash="dot", line_color="red", row=1, col=2)
+    fig.add_hline(y=0.09, line_dash="dot", line_color="yellow", row=1, col=1)
+    fig.add_hline(y=0.12, line_dash="dot", line_color="red", row=1, col=1)
+
+#     Update layout to resemble Matplotlib
+    fig.update_layout(
+        height=400, width=1000, 
+        plot_bgcolor='white',
+        xaxis=dict(showline=True, showgrid=False, gridcolor='lightgrey'),
+        yaxis=dict(showline=True, showgrid=False, gridcolor='lightgrey'))
+    
+    fig.update_yaxes(title_text='Statistic',  # axis label
+                 showline=True,  # add line at x=0
+                 linecolor='black',  # line color
+                 linewidth=2.4, # line size
+                 ticks='inside',  # ticks outside axis
+                 mirror='allticks',  # add ticks to top/right axes
+                 tickwidth=2.4,  # tick width
+                 tickcolor='black',  # tick color
+                 row=1, col=1)
+    
+    fig.update_yaxes(showline=True,  # add line at x=0
+                 linecolor='black',  # line color
+                 linewidth=2.4, # line size
+                 ticks='inside',  # ticks outside axis
+                 mirror='allticks',  # add ticks to top/right axes
+                 tickwidth=2.4,  # tick width
+                 tickcolor='black',  # tick color
+                 row=1, col=2)
+    fig.update_xaxes(title_text='Number of minibatches',
+                     showline=True,
+                     showticklabels=True,
+                     linecolor='black',
+                     linewidth=2.4,
+                     ticks='inside',
+#                      tickfont=font_dict,
+                     mirror='allticks',
+                     tickwidth=2.4,
+                     tickcolor='black',
+                     )
+
+    # Show plot
+    fig.show()
+
+    # Save plot as HTML if filename provided
+    if path_file_name_html:
+        fig.write_html(path_file_name_html)
+    
+    if path_file_name_pdf:
+        fig.write_image(path_file_name_pdf)
+    
+
 
 
       
