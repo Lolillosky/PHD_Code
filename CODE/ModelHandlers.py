@@ -549,7 +549,7 @@ def PLAT_Analysis(base_scenario_dict, test_scenario_dict, train_scenario_dict, m
     'NO', 'NPV', 'SENS', 'Hedge_NO', 'Hedge_NPV', and 'Hedge_SENS' adjustments.
     """
 
-    # [The function implementation remains the same as in your updated code]
+    
 
     model = Deep_learning_models.build_diff_learning_model(model_dict['input_dim'],
             model_dict['num_hidden_layers'],
@@ -565,15 +565,28 @@ def PLAT_Analysis(base_scenario_dict, test_scenario_dict, train_scenario_dict, m
             'scenario': test_scenario_dict['scenario_levels'],
             'closed_formula_plus_adj': test_scenario_dict['closed_form_value'] - base_scenario_dict['closed_form_value'],
             'model_adj': 0} 
+    
+    if plat_dict['plat_analysis_option'] == Enums.Plat_Analysis_Option.CONVEXITY:
+        linear_term_train = np.matmul((train_scenario_dict['scenario_levels'] - base_scenario_dict['scenario_levels']),
+                                      base_scenario_dict['closed_form_sens']).flatten()
+        linear_term_test = np.matmul((test_scenario_dict['scenario_levels'] - base_scenario_dict['scenario_levels']),
+                                      base_scenario_dict['closed_form_sens']).flatten()
+        sens_adj = base_scenario_dict['closed_form_sens']
+        
+    else: 
+        linear_term_train = 0.0
+        linear_term_test = 0.0
+        sens_adj = 0.0
+
                       
     if plat_dict['plat_analysis_option'] == Enums.Plat_Analysis_Option.NAIVE:
         
-        test_scenario_data['model_adj'] += - base_scenario_dict['closed_form_value']
+        test_scenario_data['model_adj'] += - base_scenario_dict['closed_form_value'] + linear_term_test
 
     plat_callback_NO =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
         Enums.Base_Scenario_Adj_Option.NO, plat_dict['num_batches_callback'])
 
-    test_scenario_data['model_adj'] = 0.0 
+    test_scenario_data['model_adj'] = 0.0 + linear_term_test
 
     plat_callback_NPV =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
         Enums.Base_Scenario_Adj_Option.NPV, plat_dict['num_batches_callback'])
@@ -585,14 +598,14 @@ def PLAT_Analysis(base_scenario_dict, test_scenario_dict, train_scenario_dict, m
 
     if plat_dict['plat_analysis_option'] == Enums.Plat_Analysis_Option.NAIVE:
         
-        test_scenario_data['model_adj'] += - base_scenario_dict['closed_form_value']
+        test_scenario_data['model_adj'] += - base_scenario_dict['closed_form_value'] + linear_term_test
     
-    test_scenario_data['model_adj'] += test_scenario_dict['hedge_NPV'] - base_scenario_dict['hedge_NPV']
+    test_scenario_data['model_adj'] += test_scenario_dict['hedge_NPV'] - base_scenario_dict['hedge_NPV'] + linear_term_test
 
     plat_callback_Hedge_NO =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
         Enums.Base_Scenario_Adj_Option.NO, plat_dict['num_batches_callback'])
 
-    test_scenario_data['model_adj'] = test_scenario_dict['hedge_NPV'] - base_scenario_dict['hedge_NPV']
+    test_scenario_data['model_adj'] = test_scenario_dict['hedge_NPV'] - base_scenario_dict['hedge_NPV'] + linear_term_test
 
     plat_callback_Hedge_NPV =  Deep_learning_models.Plat_Callback(base_scenario_data, test_scenario_data, model,
         Enums.Base_Scenario_Adj_Option.NPV, plat_dict['num_batches_callback'])
@@ -603,8 +616,8 @@ def PLAT_Analysis(base_scenario_dict, test_scenario_dict, train_scenario_dict, m
 
     
     model.fit(train_scenario_dict['scenario_levels'],
-            train_scenario_dict['payoff'],
-            train_scenario_dict['pathwise_derivs'], model_dict['batch_size'],
+            train_scenario_dict['payoff'] - linear_term_train,
+            train_scenario_dict['pathwise_derivs'] - sens_adj, model_dict['batch_size'],
             model_dict['num_epochs'], None,
             [plat_callback_NO, plat_callback_NPV, plat_callback_SENS,
             plat_callback_Hedge_NO, plat_callback_Hedge_NPV, plat_callback_Hedge_SENS],
