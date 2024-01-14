@@ -11,6 +11,9 @@ from scipy.stats import spearmanr
 from scipy.stats import ks_2samp 
 import matplotlib.pyplot as plt
 import Enums
+import pandas as pd
+import Scenario_Simulation
+from dateutil.relativedelta import relativedelta
 
 
 def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, hidden_activ_func, sim_scenarios_train, payoff_train, sens_train, epochs ,batch_size, valid_data = None):
@@ -631,6 +634,239 @@ def PLAT_Analysis(base_scenario_dict, test_scenario_dict, train_scenario_dict, m
     "plat_callback_Hedge_NO": plat_callback_Hedge_NO,
     "plat_callback_Hedge_NPV": plat_callback_Hedge_NPV,
     "plat_callback_Hedge_SENS": plat_callback_Hedge_SENS}
+
+
+class plat_orquestrator:
+
+    def __init__(self, training_data_generation_dict, machine_learning_models_dict,
+                 risk_management_dict, hist_data):
+
+        self.gaussian_model_dict = Miscellanea.deep_copy_dict_with_arrays(training_data_generation_dict['gaussian_model_dict'])
+        self.base_scenario_dict = Miscellanea.deep_copy_dict_with_arrays(training_data_generation_dict['base_scenario_dict'])
+        self.simulation_dict = Miscellanea.deep_copy_dict_with_arrays(training_data_generation_dict['simulation_dict'])
+        self.contract_data_dict = Miscellanea.deep_copy_dict_with_arrays(training_data_generation_dict['contract_data_dict'])
+        self.machine_learning_models_dict = Miscellanea.deep_copy_dict_with_arrays(machine_learning_models_dict)
+
+        self.simulation_dict['number_of_scenarios'] = machine_learning_models_dict['num_training_examples_payoff_reset']
+
+        self.hist_data = hist_data.drop_duplicates(keep='first')
+
+        self.hist_schocks_10d = pd.DataFrame(data = np.log(self.hist_data.iloc[10:].values/ self.hist_data.iloc[0:-10].values),
+                            index =  self.hist_data.index[10:], columns = self.hist_data.columns)
+
+
+        self.hist_schocks_1d = pd.DataFrame(data = np.log(self.hist_data.iloc[1:].values/ self.hist_data.iloc[0:-1].values),
+                            index =  self.hist_data.index[1:], columns = self.hist_data.columns)
+
+        self.risk_management_dict = Miscellanea.deep_copy_dict_with_arrays(risk_management_dict)
+
+        self.init_and_maturity_dates = self.generate_dates(self.risk_management_dict['initial_date'],
+                                self.risk_management_dict['end_date'],
+                                self.risk_management_dict['maturity_in_months_at_reset_dates'])
+
+        self.risk_management_dict['initial_date'] = self.init_and_maturity_dates[0]
+
+        self.model = Deep_learning_models.build_diff_learning_model( \
+            input_shape = self.gaussian_model_dict['n_components'],
+            num_hidden_layers = self.machine_learning_models_dict['nb_hidden_layers'],
+            num_neurons_hidden_layers = self.machine_learning_models_dict['nd_cells_hidden_layer'],
+            hidden_layer_activation = self.machine_learning_models_dict['hidden_layer_activation'],
+            output_layer_activation = self.machine_learning_models_dict['output_layer_activation'],
+            alpha = self.machine_learning_models_dict['alpha'])
+
+
+    def generate_dates(self, start_date, end_date, month_interval):
+        """
+        Generates dates every 'month_interval' months between 'start_date' and 'end_date'.
+        :param start_date: The starting date.
+        :param end_date: The ending date.
+        :param month_interval: The interval in months.
+        :return: A list of dates.
+        """
+        dates = []
+        current_date = end_date
+        while current_date > start_date:
+            dates.append(current_date)
+            current_date -= relativedelta(months=month_interval)
+
+        dates = self.hist_data.index[self.hist_data.index.get_indexer(dates, method='nearest')]
+
+        return np.array(dates[::-1])  # Reverse the list to have it in ascending order
+
+
+    def compute_historical_correlation(self, date):
+
+        date_index = self.hist_schocks_1d.index.get_indexer([date])[0]
+
+        return self.hist_schocks_1d.iloc[date_index- \
+            self.base_scenario_dict['num_escen_correl_matrix']+1:date_index+1,
+            self.base_scenario_dict['spot_indexes']].corr().values
+
+    def update_base_scenario(self, date):
+
+        date_index = self.hist_data.index.get_indexer([date])[0]
+
+        self.base_scenario_dict['spots'] = \
+            self.hist_data.iloc[date_index,self.base_scenario_dict['spot_indexes']].values
+
+        self.base_scenario_dict['vols'] = \
+            self.hist_data.iloc[date_index,self.base_scenario_dict['vol_indexes']].values / 100.0
+
+        self.base_scenario_dict['correlations'] = \
+            self.compute_historical_correlation(date)
+
+    def compute_indiv_strikes(self, date):
+
+        last_fixing_date =  self.init_and_maturity_dates[self.init_and_maturity_dates <= date][-1]
+
+        date_index = self.hist_data.index.get_indexer([last_fixing_date])[0]
+
+        return self.hist_data.iloc[date_index,self.base_scenario_dict['spot_indexes']].values
+
+
+    def update_payoff(self, date):
+
+        next_maturity_date = self.init_and_maturity_dates[self.init_and_maturity_dates > date][0]
+
+        indiv_strikes =  self.compute_indiv_strikes(date)
+
+        maturity_years = ((next_maturity_date - date).days)/365.25
+
+        self.contract_data_dict['payoff'] = \
+            self.contract_data_dict["generic_payoff"]( \
+            indiv_strikes_value = indiv_strikes)
+
+
+        self.contract_data_dict['closed_form_formula'] = self.contract_data_dict['generic_closed_form_formula']( \
+                    indiv_strikes_value = indiv_strikes, maturity = maturity_years)
+
+
+        self.contract_data_dict['ttm'] = maturity_years
+
+
+    def compute_training_data(self, date):
+
+        self.update_base_scenario(date)
+        self.update_payoff(date)
+
+
+        date_index = self.hist_schocks_1d.index.get_indexer([date])[0]
+
+
+        dict_1d_results = Scenario_Simulation.calibrate_hist_data_simulate_training_data(
+            gaussian_model_dict= self.gaussian_model_dict,
+            base_scenario_dict= self.base_scenario_dict,
+            simulation_dict= self.simulation_dict,
+            contract_data_dict= self.contract_data_dict,
+            hist_schocks_data= self.hist_schocks_1d.iloc[date_index -
+            self.gaussian_model_dict['n_examples']:date_index].values)
+
+        date_index = self.hist_schocks_10d.index.get_indexer([date])[0]
+
+        dict_10d_results = Scenario_Simulation.calibrate_hist_data_simulate_training_data(
+            gaussian_model_dict= self.gaussian_model_dict,
+            base_scenario_dict= self.base_scenario_dict,
+            simulation_dict= self.simulation_dict,
+            contract_data_dict= self.contract_data_dict,
+            hist_schocks_data= self.hist_schocks_10d.iloc[date_index -
+            self.gaussian_model_dict['n_examples']:date_index].values)
+
+        train_data_keys = ['sim_scenario_levels', 'payoff', 'pathwise_derivs']
+
+        dict_1d_results_train = {k:dict_1d_results[k] for k in train_data_keys}
+        dict_10d_results_train = {k:dict_10d_results[k] for k in train_data_keys}
+
+
+        dict_mixed_data_train = Miscellanea.shuffle_arrays_in_dict(
+            Miscellanea.concat_dict_containing_np_arrays([dict_1d_results_train,dict_10d_results_train]))
+
+
+        return dict_mixed_data_train
+
+
+    def train_model(self, date):
+
+        is_reset_date = date in self.init_and_maturity_dates
+
+        if not is_reset_date:
+            num_examples = self.machine_learning_models_dict['num_training_examples_daily_calc']
+            num_epochs = self.machine_learning_models_dict['num_epochs_daily_calc']
+        else:
+            num_examples = self.machine_learning_models_dict['num_training_examples_payoff_reset']
+            num_epochs = self.machine_learning_models_dict['num_epochs_payoff_reset']
+
+        dict_mixed_data_train = self.compute_training_data(date)
+
+
+        self.model.fit(dict_mixed_data_train['sim_scenario_levels'][0:num_examples],
+            dict_mixed_data_train['payoff'][0:num_examples],
+            dict_mixed_data_train['pathwise_derivs'][0:num_examples],
+            self.machine_learning_models_dict['batch_size'],
+            num_epochs, None, None,
+            self.machine_learning_models_dict['verbose'])
+
+    def train_models_for_all_dates(self):
+        
+        Miscellanea.delete_content_of_folder(self.machine_learning_models_dict['MODELS_PATH'])
+
+        index_begin_date = self.hist_data.index.get_indexer([self.init_and_maturity_dates[0]])[0]
+        
+        for i in range(index_begin_date,len(self.hist_data)-2):
+            
+            date = self.hist_data.index[i] 
+            
+            print("Fitting model for date " + date.strftime('%d-%m-%Y'))
+            
+            path = self.machine_learning_models_dict['MODELS_PATH'] + date.strftime('%Y-%m-%d/') 
+            os.mkdir(path)
+            
+            self.train_model(date)
+            self.model.save(path)
+            
+            clear_output()
+            
+    def run_plat_analysis(self):
+        
+        self.hpl = []
+        self.rtpl = []
+        self.dates = []
+        
+        index_begin_date = self.hist_data.index.get_indexer([self.init_and_maturity_dates[0]])[0]
+        
+        base_scenario = np.zeros((1,self.gaussian_model_dict['n_components']))
+        
+        for i in range(index_begin_date,len(self.hist_data)-2):
+            
+            date = self.hist_data.index[i] 
+            
+            print("Computing PLAT analysis for date " + date.strftime('%d-%m-%Y'))
+            
+            self.dates += [date]
+            
+            self.update_base_scenario(date)
+            self.update_payoff(date)
+            
+            path = self.machine_learning_models_dict['MODELS_PATH'] + date.strftime('%Y-%m-%d/') 
+            
+            model = Deep_learning_models.Diff_learning_scaler.open(path)
+
+            base_scenario[0,self.base_scenario_dict['spot_indexes']] = self.base_scenario_dict['spots']
+            base_scenario[0,self.base_scenario_dict['vol_indexes']] = self.base_scenario_dict['vols']
+            
+            model_prediction = model.predict(base_scenario, batch_size = 1) 
+            
+            self.hpl += [model_prediction['y']]
+            self.rtpl += [self.contract_data_dict['closed_form_formula'](
+                                                spot_t = self.base_scenario_dict['spots'].reshape(1,-1),
+                                                vol_t = self.base_scenario_dict['vols'].reshape(1,-1), 
+                                                rfr = self.base_scenario_dict['rfr'],
+                                                divs = self.base_scenario_dict['divs'],
+                                                correl = self.base_scenario_dict['correlations'])]
+            
+            clear_output()
+            
+
+
 
               
 
