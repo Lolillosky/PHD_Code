@@ -8,6 +8,9 @@ from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
 import matplotlib.animation as animation
 import copy
 from plotly.subplots import make_subplots
+import datetime
+import re
+  
 
 
 
@@ -426,19 +429,30 @@ def plot_plat_training_plotly(plat_results_list, plat_names_list, path_file_name
     
     if path_file_name_pdf:
         fig.write_image(path_file_name_pdf)
-    
 
+def get_latest_non_empty_subfolder_and_delete_empty(parent_folder):
+    date_regex = re.compile(r'\d{4}-\d{2}-\d{2}')
 
+    # List all subfolders and filter by date format
+    folders = [f for f in os.listdir(parent_folder) 
+               if os.path.isdir(os.path.join(parent_folder, f)) 
+               and date_regex.match(f)]
 
-      
+    # Sort folders by date and find the latest non-empty one
+    latest_non_empty_folder = None
+    for folder in sorted(folders, key=lambda x: datetime.datetime.strptime(x, '%Y-%m-%d'), reverse=False):
+        folder_path = os.path.join(parent_folder, folder)
+        if os.listdir(folder_path):
+            latest_non_empty_folder = folder
+        else:
+            # Delete the empty folder
+            try:
+                os.rmdir(folder_path)
+                print(f"Deleted empty folder: {folder}"  )
+            except OSError as e:
+                print(f"Error deleting {folder}: {e}")
 
-
-
-
-
-    
-
-
+    return latest_non_empty_folder if latest_non_empty_folder else "No non-empty subfolders found."
 
 
 

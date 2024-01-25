@@ -141,17 +141,17 @@ class Basket:
         base_scenario_tensor = tf.constant(base_scenario.reshape(1,-1))
 
         with tf.GradientTape(persistent=True) as tape:
-            
+                
             tape.watch(base_scenario_tensor)
             
             basket_calc = [b(base_scenario_tensor) for b in self.basket_elements]
             exotic_calc = self.exotic(base_scenario_tensor) 
 
-        jac = np.concatenate([tape.gradient(b,base_scenario_tensor).numpy() for b in basket_calc], axis = 0)
+        self.jac = np.concatenate([tape.gradient(b,base_scenario_tensor).numpy() for b in basket_calc], axis = 0).T
         
-        grad = tape.gradient(exotic_calc, base_scenario_tensor).numpy().T
+        self.grad = tape.gradient(exotic_calc, base_scenario_tensor).numpy().T
         
-        self.weights = -np.matmul(np.linalg.pinv(jac),grad).T
+        self.weights = -np.matmul(np.linalg.pinv(self.jac),self.grad).T
         self.hedge_computed = True  # set the flag variable to True
     
     def value_basket(self, scenario):

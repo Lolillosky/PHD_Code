@@ -203,14 +203,14 @@ class Diff_learning_scaler:
   def compute_normalization_params(self, X, y, dydX):
 
     self.X_mu = np.mean(X, axis = 0)
-    self.X_sigma = np.std(X, axis = 0)
+    self.X_sigma = np.std(X, axis = 0) + 1e-8
 
     self.y_mu = np.mean(y)
-    self.y_sigma = np.std(y)
+    self.y_sigma = np.std(y) + 1e-8
 
     dydX_scaled = dydX * self.X_sigma / self.y_sigma  
 
-    self.dydX_scaled_L2_norm = np.mean(dydX_scaled*dydX_scaled, axis = 0)
+    self.dydX_scaled_L2_norm = np.mean(dydX_scaled*dydX_scaled, axis = 0) + 1e-8
 
 
   def normalize_data(self, X, y, dydX):
@@ -270,7 +270,7 @@ class Diff_learning_scaler:
 
     else:
 
-      callbacks=[epoch_counter]
+      callbacks=[]
 
       if plat_callback is not None:
 

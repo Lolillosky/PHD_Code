@@ -14,6 +14,7 @@ import Enums
 import pandas as pd
 import Scenario_Simulation
 from dateutil.relativedelta import relativedelta
+import Option_formulas
 
 
 def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, hidden_activ_func, sim_scenarios_train, payoff_train, sens_train, epochs ,batch_size, valid_data = None):
@@ -712,6 +713,11 @@ class plat_orquestrator:
         self.base_scenario_dict['vols'] = \
             self.hist_data.iloc[date_index,self.base_scenario_dict['vol_indexes']].values / 100.0
 
+        self.base_scenario_dict['base_scenario'] =  np.zeros((1,self.gaussian_model_dict['n_components']))
+        self.base_scenario_dict['base_scenario'][0,self.base_scenario_dict['spot_indexes']] = self.base_scenario_dict['spots'] 
+        self.base_scenario_dict['base_scenario'][0,self.base_scenario_dict['vol_indexes']] = self.base_scenario_dict['vols'] 
+         
+
         self.base_scenario_dict['correlations'] = \
             self.compute_historical_correlation(date)
 
@@ -725,10 +731,13 @@ class plat_orquestrator:
 
 
     def update_payoff(self, date):
+        # update_base_scenario to be called before
 
         next_maturity_date = self.init_and_maturity_dates[self.init_and_maturity_dates > date][0]
 
         indiv_strikes =  self.compute_indiv_strikes(date)
+
+        self.contract_data_dict['indiv_strikes'] = indiv_strikes
 
         maturity_years = ((next_maturity_date - date).days)/365.25
 
@@ -737,11 +746,42 @@ class plat_orquestrator:
             indiv_strikes_value = indiv_strikes)
 
 
-        self.contract_data_dict['closed_form_formula'] = self.contract_data_dict['generic_closed_form_formula']( \
-                    indiv_strikes_value = indiv_strikes, maturity = maturity_years)
+        self.contract_data_dict['closed_form_formula'] = lambda MktData: self.contract_data_dict['generic_closed_form_formula']( \
+                    indiv_strikes_value = indiv_strikes, maturity = maturity_years)(
+                        spot_t = MktData[:,self.base_scenario_dict['spot_indexes']],
+                        vol_t =  MktData[:,self.base_scenario_dict['vol_indexes']],
+                        rfr = self.base_scenario_dict['rfr'],
+                        divs = self.base_scenario_dict['divs'],
+                        correl = self.base_scenario_dict['correlations'])
 
 
         self.contract_data_dict['ttm'] = maturity_years
+
+    def update_hedge(self, date):
+
+        # update_base_scenario and update_payoff to be called before
+
+        futs = []
+        calls = []
+
+        for i in range(int(self.gaussian_model_dict['n_components']/2)):
+            loop_i = i
+            futs += [lambda MktData, i=loop_i: Option_formulas.FutureTF(MktData[:,self.base_scenario_dict['spot_indexes'][i]],
+                                self.contract_data_dict['indiv_strikes'][i],
+                                self.contract_data_dict['ttm'], self.base_scenario_dict['rfr'], 
+                                self.base_scenario_dict['divs'])]
+
+            calls += [lambda MktData, i=loop_i: Option_formulas.BlackScholesTF(MktData[:,self.base_scenario_dict['spot_indexes'][i]],
+                                self.contract_data_dict['indiv_strikes'][i], self.contract_data_dict['ttm'],
+                                self.base_scenario_dict['rfr'], self.base_scenario_dict['divs'],
+                                MktData[:,self.base_scenario_dict['vol_indexes'][i]], True)]
+
+
+        hedge_instruments = futs + calls   
+
+        self.hedge = Option_formulas.Basket(hedge_instruments, self.contract_data_dict['closed_form_formula'] )
+
+        self.hedge.compute_hedge(self.base_scenario_dict['base_scenario'])
 
 
     def compute_training_data(self, date):
@@ -781,7 +821,8 @@ class plat_orquestrator:
             Miscellanea.concat_dict_containing_np_arrays([dict_1d_results_train,dict_10d_results_train]))
 
 
-        return dict_mixed_data_train
+        # return dict_mixed_data_train
+        return dict_1d_results_train
 
 
     def train_model(self, date):
@@ -824,17 +865,51 @@ class plat_orquestrator:
             self.model.save(path)
             
             clear_output()
+    
+    def continue_training_models(self):
+
+        last_fitted_date = Miscellanea.get_latest_non_empty_subfolder_and_delete_empty(self.machine_learning_models_dict['MODELS_PATH'])
+
+        index_begin_date = self.hist_data.index.get_indexer([pd.Timestamp(last_fitted_date)])[0] + 1
+        
+        self.model = Deep_learning_models.Diff_learning_scaler.open(self.machine_learning_models_dict['MODELS_PATH'] + last_fitted_date + '/')
+
+        for i in range(index_begin_date,len(self.hist_data)-2):
+            
+            date = self.hist_data.index[i] 
+            
+            print("Fitting model for date " + date.strftime('%d-%m-%Y'))
+            
+            path = self.machine_learning_models_dict['MODELS_PATH'] + date.strftime('%Y-%m-%d/') 
+            os.mkdir(path)
+            
+            self.train_model(date)
+            self.model.save(path)
+            
+            clear_output()
+
+
             
     def run_plat_analysis(self):
         
         self.hpl = []
-        self.rtpl = []
+        self.hpl_with_hedge = []
+        self.rtpl_naive = []
+        self.rtpl_naive_with_hedge = []
+        self.rtpl_npv = []
+        self.rtpl_npv_with_hedge = []
+        self.rtpl_sens = []
+        self.rtpl_sens_with_hedge = []
+
+        
         self.dates = []
         
         index_begin_date = self.hist_data.index.get_indexer([self.init_and_maturity_dates[0]])[0]
         
         base_scenario = np.zeros((1,self.gaussian_model_dict['n_components']))
-        
+        shocked_scenario = np.zeros((1,self.gaussian_model_dict['n_components']))
+
+
         for i in range(index_begin_date,len(self.hist_data)-2):
             
             date = self.hist_data.index[i] 
