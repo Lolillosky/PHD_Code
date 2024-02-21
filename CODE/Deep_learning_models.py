@@ -413,8 +413,11 @@ def build_diff_learning_model(input_shape, num_hidden_layers, num_neurons_hidden
 
 
 
+
+
+
 class Plat_Callback(tf.keras.callbacks.Callback):
-    def __init__(self, base_scenario_dict, test_scenario_dict, diff_learning_scaler, base_scenario_adj_option, count_show):
+    def __init__(self, base_scenario_dict, test_scenario_dict, diff_learning_scaler, plat_analysis_option, count_show):
 
       '''
       - 'scenario' (numpy.ndarray): An array of simulated scenarios used for test.
@@ -427,69 +430,117 @@ class Plat_Callback(tf.keras.callbacks.Callback):
 
 
       self.diff_learning_scaler = diff_learning_scaler
-      self.base_scenario_adj_option = base_scenario_adj_option
+      self.plat_analysis_option = plat_analysis_option
 
-      self.ks_stat = []
-      self.rank_corr = []
       self.count_show = count_show
       self.batch_count = 0 
-      self.output_dict = {}
-
-      self.output_dict['ks_stat'] = []
-      self.output_dict['rank_corr'] = []
-      self.output_dict['y_true'] = []
-      self.output_dict['y_pred'] = []
-      self.output_dict['batch_count'] = []
       
+      self.output_NO = {'batch_count': [], 'ks_stat': [], 'rank_corr': [], 'y_true': [], 'y_pred': []}
+      self.output_NPV = {'batch_count': [], 'ks_stat': [], 'rank_corr': [], 'y_true': [], 'y_pred': []}
+      self.output_SENS = {'batch_count': [], 'ks_stat': [], 'rank_corr': [], 'y_true': [], 'y_pred': []}
       
-  
+      self.output_hedged_NO = {'batch_count': [], 'ks_stat': [], 'rank_corr': [], 'y_true': [], 'y_pred': []}
+      self.output_hedged_NPV = {'batch_count': [], 'ks_stat': [], 'rank_corr': [], 'y_true': [], 'y_pred': []}
+      self.output_hedged_SENS = {'batch_count': [], 'ks_stat': [], 'rank_corr': [], 'y_true': [], 'y_pred': []}
       
 
+    
     def on_batch_end(self, epoch, logs=None):
         
         if (self.batch_count % self.count_show) == 0:
 
-          model_predict_test_y = self.diff_learning_scaler.predict(self.test_scenario_dict['scenario'], batch_size = len(self.test_scenario_dict['scenario']))['y']
+          model_predict_test_y = self.diff_learning_scaler.predict(self.test_scenario_dict['scenario_levels'], batch_size = len(self.test_scenario_dict['scenario_levels']))['y']
 
+          base_scen_predict = self.diff_learning_scaler.predict(self.base_scenario_dict['scenario_levels'], batch_size = 1)
+
+          base_scen_y = base_scen_predict['y']
           
-          if  (self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV) or \
-                (self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS):
-            
-            base_scen_predict = self.diff_learning_scaler.predict(self.base_scenario_dict['scenario'], batch_size = 1)
-
-            base_scen_y = base_scen_predict['y']
-            
-            base_scen_sens = base_scen_predict['sens']
-
-            model_adj_base = -base_scen_y
+          base_scen_sens = base_scen_predict['sens']
+        
+          delta_NPV_true = self.test_scenario_dict['closed_form_value'] - self.base_scenario_dict['closed_form_value']
+          delta_hedge = self.test_scenario_dict['hedge_NPV'] - self.base_scenario_dict['hedge_NPV']
+          delta_NPV_hedged_true = delta_NPV_true + delta_hedge
           
-          else:
+          
+          if self.plat_analysis_option == Enums.Plat_Analysis_Option.NAIVE:
 
-            model_adj_base = 0.0
+            delta_NPV_pred_NO = model_predict_test_y - self.base_scenario_dict['closed_form_value']
+            delta_NPV_hedged_pred_NO = delta_NPV_pred_NO + delta_hedge
+
+            delta_NPV_pred_NPV = model_predict_test_y - base_scen_y
+            delta_NPV_hedged_pred_NPV = delta_NPV_pred_NPV + delta_hedge
+
+            delta_NPV_pred_SENS = model_predict_test_y - base_scen_y + np.matmul(self.test_scenario_dict['scenario_levels']-self.base_scenario_dict['scenario_levels'],
+                                                  (self.base_scenario_dict['closed_form_sens'] - base_scen_sens).T).flatten()
+            delta_NPV_hedged_pred_SENS = delta_NPV_pred_SENS + delta_hedge
+
+          elif self.plat_analysis_option == Enums.Plat_Analysis_Option.VAR_REDUCTION:
             
-            
+            delta_NPV_pred_NO = model_predict_test_y 
+            delta_NPV_hedged_pred_NO = delta_NPV_pred_NO + delta_hedge
 
-          if (self.base_scenario_adj_option == Enums.Base_Scenario_Adj_Option.NPV_PLUS_SENS):
-           
-              model_adj_base_sens_test = np.matmul(self.test_scenario_dict['scenario']-self.base_scenario_dict['scenario'],
-                                                  (self.base_scenario_dict['base_scenario_closed_form_sens'] - base_scen_sens).T).flatten()
-          else:
-              model_adj_base_sens_test = 0.0
+            delta_NPV_pred_NPV = model_predict_test_y - base_scen_y
+            delta_NPV_hedged_pred_NPV = delta_NPV_pred_NPV + delta_hedge
 
-          y_true = self.test_scenario_dict['closed_formula_plus_adj']
-          y_pred = model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj']
+            delta_NPV_pred_SENS = model_predict_test_y - base_scen_y + np.matmul(self.test_scenario_dict['scenario_levels']-self.base_scenario_dict['scenario_levels'],
+                                                  (self.base_scenario_dict['closed_form_sens'] - base_scen_sens).T).flatten()
+            delta_NPV_hedged_pred_SENS = delta_NPV_pred_SENS + delta_hedge
+
+          elif self.plat_analysis_option == Enums.Plat_Analysis_Option.CONVEXITY:
+
+            delta_NPV_pred_NO = model_predict_test_y + np.matmul(self.test_scenario_dict['scenario_levels']-self.base_scenario_dict['scenario_levels'],
+                                                                 self.base_scenario_dict['closed_form_sens'])
+            delta_NPV_hedged_pred_NO = delta_NPV_pred_NO + delta_hedge
+
+            delta_NPV_pred_NPV = model_predict_test_y - base_scen_y + np.matmul(self.test_scenario_dict['scenario_levels']-self.base_scenario_dict['scenario_levels'],
+                                                                 self.base_scenario_dict['closed_form_sens'])
+            delta_NPV_hedged_pred_NPV = delta_NPV_pred_NPV + delta_hedge
+
+            delta_NPV_pred_SENS = model_predict_test_y - base_scen_y + np.matmul(self.test_scenario_dict['scenario_levels']-self.base_scenario_dict['scenario_levels'],
+                                                  (self.base_scenario_dict['closed_form_sens']- base_scen_sens).T).flatten()
+            delta_NPV_hedged_pred_SENS = delta_NPV_pred_SENS + delta_hedge
+
           # Compute the Spearman correlation coefficient and the KS statistic between the predicted payoffs and the closed-formula prices for historical scenarios
-          spearman_test, _ = spearmanr(y_pred, y_true)
-          ks_hist_test, _ = ks_2samp(y_pred, y_true)
+          
+          self.output_NO['batch_count'] += [self.batch_count]
+          self.output_NO['ks_stat'] += [ks_2samp(delta_NPV_true, delta_NPV_pred_NO)[0]]
+          self.output_NO['rank_corr'] += [spearmanr(delta_NPV_true, delta_NPV_pred_NO)[0]]
+          self.output_NO['y_true'] += [delta_NPV_true]
+          self.output_NO['y_pred'] += [delta_NPV_pred_NO]
 
-          self.output_dict['ks_stat'] += [ks_hist_test]
-          self.output_dict['rank_corr'] += [spearman_test]
+          self.output_NPV['batch_count'] += [self.batch_count]
+          self.output_NPV['ks_stat'] += [ks_2samp(delta_NPV_true, delta_NPV_pred_NPV)[0]]
+          self.output_NPV['rank_corr'] += [spearmanr(delta_NPV_true, delta_NPV_pred_NPV)[0]]
+          self.output_NPV['y_true'] += [delta_NPV_true]
+          self.output_NPV['y_pred'] += [delta_NPV_pred_NPV]
 
-          self.output_dict['y_true'] += [y_true]
-          self.output_dict['y_pred'] += [y_pred]
-          self.output_dict['batch_count'] += [self.batch_count + 1]
-  
+          self.output_SENS['batch_count'] += [self.batch_count]
+          self.output_SENS['ks_stat'] += [ks_2samp(delta_NPV_true, delta_NPV_pred_SENS)[0]]
+          self.output_SENS['rank_corr'] += [spearmanr(delta_NPV_true, delta_NPV_pred_SENS)[0]]
+          self.output_SENS['y_true'] += [delta_NPV_true]
+          self.output_SENS['y_pred'] += [delta_NPV_pred_SENS]
+
+          self.output_hedged_NO['batch_count'] += [self.batch_count]
+          self.output_hedged_NO['ks_stat'] += [ks_2samp(delta_NPV_hedged_true, delta_NPV_hedged_pred_NO)[0]]
+          self.output_hedged_NO['rank_corr'] += [spearmanr(delta_NPV_hedged_true, delta_NPV_hedged_pred_NO)[0]]
+          self.output_hedged_NO['y_true'] += [delta_NPV_hedged_true]
+          self.output_hedged_NO['y_pred'] += [delta_NPV_hedged_pred_NO]
+
+          self.output_hedged_NPV['batch_count'] += [self.batch_count]
+          self.output_hedged_NPV['ks_stat'] += [ks_2samp(delta_NPV_hedged_true, delta_NPV_hedged_pred_NPV)[0]]
+          self.output_hedged_NPV['rank_corr'] += [spearmanr(delta_NPV_hedged_true, delta_NPV_hedged_pred_NPV)[0]]
+          self.output_hedged_NPV['y_true'] += [delta_NPV_hedged_true]
+          self.output_hedged_NPV['y_pred'] += [delta_NPV_hedged_pred_NPV]
+
+          self.output_hedged_SENS['batch_count'] += [self.batch_count]
+          self.output_hedged_SENS['ks_stat'] += [ks_2samp(delta_NPV_hedged_true, delta_NPV_hedged_pred_SENS)[0]]
+          self.output_hedged_SENS['rank_corr'] += [spearmanr(delta_NPV_hedged_true, delta_NPV_hedged_pred_SENS)[0]]
+          self.output_hedged_SENS['y_true'] += [delta_NPV_hedged_true]
+          self.output_hedged_SENS['y_pred'] += [delta_NPV_hedged_pred_SENS]
+        
+        self.batch_count += 1
+
 
           # Miscellanea.plot_plat_charts(model_predict_test_y + model_adj_base + model_adj_base_sens_test + self.test_scenario_dict['model_adj'], self.test_scenario_dict['closed_formula_plus_adj'])
         
-        self.batch_count += 1
+        

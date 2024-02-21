@@ -12,37 +12,6 @@ import datetime
 import re
   
 
-
-
-def delete_content_of_folder(folder):
-    '''
-    Deletes contents of every element within a folder
-    Inputs:
-    ------
-    folder (str): path of folder
-    '''
-    if os.path.exists(folder):
-        confirm = input(f"The folder '{folder}' exists. Do you want to delete its contents? (y/n)").lower()
-        if confirm == "y":
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                try:
-                    if os.path.isfile(file_path) or os.path.islink(file_path):
-                        os.unlink(file_path)
-                    elif os.path.isdir(file_path):
-                        shutil.rmtree(file_path)
-                except Exception as e:
-                    print('Failed to delete %s. Reason: %s' % (file_path, e))
-            print(f"The contents of the folder '{folder}' have been deleted.")
-        else:
-            print(f"The contents of the folder '{folder}' were not deleted.")
-    else:
-        print(f"The folder '{folder}' does not exist, but will be created.")
-        os.mkdir(folder)
-
-
-
-
 def plot_schocks(number_risk_factors, list_of_shocks, risk_factor_names, bins):
 
     '''
@@ -285,22 +254,22 @@ def animate_plat_evolution(plat_results, chart_title = "", path_file = None):
     fig, ax = plt.subplots(1,2)
 
     # Animation update function
-    def update(frame):
+    def update(frame):                                  
         # Clear the current axes
         ax[0].clear()
         ax[1].clear()
 
 
         # Select the data for the current frame
-        hpl = plat_results.output_dict['y_true'][frame]
-        rtpl = plat_results.output_dict['y_pred'][frame]
+        hpl = plat_results['y_true'][frame]
+        rtpl = plat_results['y_pred'][frame]
 
         # Call your plot function
         plot_plat_charts(hpl, rtpl,fig_ax_list = [fig, ax],
-            fig_tittle=chart_title + f"Plat statistics after minibatch {plat_results.output_dict['batch_count'][frame]}")
+            fig_tittle=chart_title + f"Plat statistics after minibatch {plat_results['batch_count'][frame]}")
 
     # Create the animation
-    ani = animation.FuncAnimation(fig, update, frames=len(plat_results.output_dict['y_true']), repeat=True)
+    ani = animation.FuncAnimation(fig, update, frames=len(plat_results['y_true']), repeat=True)
 
     plt.close()
 
@@ -333,8 +302,8 @@ def plot_plat_training(plat_results_list, plat_names_list, path_file_name = None
     
     for plat_result, plat_name in zip(plat_results_list, plat_names_list):
     
-        ax[0].plot(plat_result.output_dict['batch_count'], plat_result.output_dict['ks_stat'], '.-',label = plat_name)
-        ax[1].plot(plat_result.output_dict['batch_count'], plat_result.output_dict['rank_corr'], '.-', label = plat_name)
+        ax[0].plot(plat_result['batch_count'], plat_result['ks_stat'], '.-',label = plat_name)
+        ax[1].plot(plat_result['batch_count'], plat_result['rank_corr'], '.-', label = plat_name)
         
     ax[0].legend()
     ax[1].legend()
@@ -363,7 +332,7 @@ def plot_plat_training_plotly(plat_results_list, plat_names_list, path_file_name
 
         # KS Statistic plot
         fig.add_trace(
-            go.Scatter(x=plat_result.output_dict['batch_count'], y=plat_result.output_dict['ks_stat'], 
+            go.Scatter(x=plat_result['batch_count'], y=plat_result['ks_stat'], 
                        mode='lines', name=plat_name + ' ks', line=dict(color=color, width=2), 
                        marker=dict(size=7)),
             row=1, col=1
@@ -371,7 +340,7 @@ def plot_plat_training_plotly(plat_results_list, plat_names_list, path_file_name
 
         # Rank Correlation plot
         fig.add_trace(
-            go.Scatter(x=plat_result.output_dict['batch_count'], y=plat_result.output_dict['rank_corr'], 
+            go.Scatter(x=plat_result['batch_count'], y=plat_result['rank_corr'], 
                        mode='lines', name=plat_name + ' rank corr', line=dict(color=color, width=2), 
                        marker=dict(size=7)),
             row=1, col=2
@@ -455,10 +424,54 @@ def get_latest_non_empty_subfolder_and_delete_empty(parent_folder):
     return latest_non_empty_folder if latest_non_empty_folder else "No non-empty subfolders found."
 
 
+def check_and_manage_path(path):
+    """
+    Checks if a specified path exists and manages it based on its content and user input.
+    
+    - If the path does not exist, it prompts the user for creation.
+    - If the path exists and is empty, does nothing.
+    - If the path exists and contains files/directories, it asks the user if they want to delete the content.
+    - Forces an error if the user does not approve creation or deletion when prompted.
+    
+    Parameters:
+    path (str): The filesystem path to check and manage.
+    
+    Raises:
+    ValueError: If the user declines creation of the path or deletion of its contents.
+    """
+    
+    # Check if the specified path exists
+    if not os.path.exists(path):
+        # Prompt the user for creation if the path does not exist
+        create = input(f"The path {path} does not exist. Do you want to create it? (y/n): ").strip().lower()
+        if create == 'y':
+            # Create the path as per user approval
+            os.makedirs(path)
+            print(f"Path created: {path}")
+        else:
+            # Raise an error if the user declines to create the path
+            raise ValueError("Creation of the path was not approved. Exiting.")
+    else:
+        # If the path exists, check if it is empty
+        if os.listdir(path):
+            # Path is not empty, ask for user approval to delete contents
+            delete = input(f"The path {path} is not empty. Do you want to delete its content? (y/n): ").strip().lower()
+            if delete == 'y':
+                # Delete the directory and its contents, then recreate the directory
+                shutil.rmtree(path)
+                os.makedirs(path)
+                print(f"Content of the path {path} has been deleted.")
+            else:
+                # Raise an error if the user declines to delete the contents
+                raise ValueError("Deletion of the path content was not approved. Exiting.")
+        else:
+            # If the path is empty, there's nothing to do
+            print("The path exists and is empty. Nothing to do.")
 
-
-
-
+# Example usage:
+# Replace "your/path/here" with the actual path you wish to check and manage.
+# path = "your/path/here"
+# check_and_manage_path(path)
 
 
 
