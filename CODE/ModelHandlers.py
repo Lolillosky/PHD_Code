@@ -18,6 +18,7 @@ import Option_formulas
 import pickle
 import gc
 
+
 def TrainSetOfModels(PATH_MODELS, alphas, cells_layer, num_hidden_layers, hidden_activ_func, sim_scenarios_train, payoff_train, sens_train, epochs ,batch_size, valid_data = None):
 
     '''
@@ -630,6 +631,7 @@ class plat_orquestrator:
         self.risk_management_dict['initial_date'] = self.init_and_maturity_dates[0]
 
         self.model = None
+        
 
     def generate_dates(self, start_date, end_date, month_interval):
         """
@@ -714,39 +716,60 @@ class plat_orquestrator:
 
         self.contract_data_dict['ttm'] = maturity_years
 
-    def update_hedge(self, date):
+    def update_hedge(self):
 
         # update_base_scenario and update_payoff to be called before
 
-        futs = []
-        calls = []
+        self.hedge = []
 
-        if self.risk_management_dict['hedge_maturity_in_years'] is not None:
-            hedge_maturity = self.risk_management_dict['hedge_maturity_in_years']
-        else:
-            hedge_maturity = self.contract_data_dict['ttm']
+        for hedge_data in product(self.risk_management_dict['hedge_maturity_in_years'],
+                    self.risk_management_dict['fut_hedge'],
+                    self.risk_management_dict['call_hedge']):
 
-        for i in range(int(self.gaussian_model_dict['n_components']/2)):
-            loop_i = i
+            futs = []
+            calls = []
 
-            if self.risk_management_dict['fut_hedge'][i]:
-                futs += [lambda MktData, i=loop_i: Option_formulas.FutureTF(MktData[:,self.base_scenario_dict['spot_indexes'][i]],
-                                    self.contract_data_dict['indiv_strikes'][i],
-                                    hedge_maturity, self.base_scenario_dict['rfr'], 
-                                    self.base_scenario_dict['divs'])]
-                
-            if self.risk_management_dict['call_hedge'][i]:
-                calls += [lambda MktData, i=loop_i: Option_formulas.BlackScholesTF(MktData[:,self.base_scenario_dict['spot_indexes'][i]],
-                                    self.contract_data_dict['indiv_strikes'][i], hedge_maturity,
-                                    self.base_scenario_dict['rfr'], self.base_scenario_dict['divs'],
-                                    MktData[:,self.base_scenario_dict['vol_indexes'][i]], True)]
+            if hedge_data[0] is not None:
+                hedge_maturity = hedge_data[0]
+            else:
+                hedge_maturity = self.contract_data_dict['ttm']
 
-        hedge_instruments = futs + calls   
+            for i in range(int(self.gaussian_model_dict['n_components']/2)):
+                loop_i = i
 
-        self.hedge = Option_formulas.Basket(hedge_instruments, self.contract_data_dict['closed_form_formula'] )
+                if hedge_data[1][i]:
+                    futs += [lambda MktData, i=loop_i: Option_formulas.FutureTF(MktData[:,self.base_scenario_dict['spot_indexes'][i]],
+                                        self.contract_data_dict['indiv_strikes'][i],
+                                        hedge_maturity, self.base_scenario_dict['rfr'], 
+                                        self.base_scenario_dict['divs'])]
+                    
+                if hedge_data[2][i]:
+                    calls += [lambda MktData, i=loop_i: Option_formulas.BlackScholesTF(MktData[:,self.base_scenario_dict['spot_indexes'][i]],
+                                        self.contract_data_dict['indiv_strikes'][i], hedge_maturity,
+                                        self.base_scenario_dict['rfr'], self.base_scenario_dict['divs'],
+                                        MktData[:,self.base_scenario_dict['vol_indexes'][i]], True)]
 
-        self.hedge.compute_hedge(self.base_scenario_dict['base_scenario'])
+            hedge_instruments = futs + calls   
 
+            self.hedge += [Option_formulas.Basket(hedge_instruments, self.contract_data_dict['closed_form_formula'])]
+
+            self.hedge[-1].compute_hedge(self.base_scenario_dict['base_scenario'])
+
+    def simulate_cvar_data(self, date):
+        # self.update_base_scenario(date) to be done before
+
+        date_index = self.hist_schocks_10d.index.get_indexer([date])[0]
+
+        dict_10d_results = Scenario_Simulation.calibrate_hist_data_simulate_training_data(
+            gaussian_model_dict= self.gaussian_model_dict,   
+            base_scenario_dict= self.base_scenario_dict,
+            simulation_dict= self.simulation_dict,
+            contract_data_dict= self.contract_data_dict,
+            hist_schocks_data= self.hist_schocks_10d.iloc[date_index -
+            self.gaussian_model_dict['n_examples']:date_index].values)
+        
+        return dict_10d_results['sim_scenario_levels']
+      
 
     def compute_training_data(self, date):
 
@@ -874,6 +897,12 @@ class plat_orquestrator:
         self.rtpl_npv_with_hedge = []
         self.rtpl_sens = []
         self.rtpl_sens_with_hedge = []
+        self.cvar = []
+        self.cvar_pred = []
+        self.cvar_with_hedge = []
+        self.cvar_pred_with_hedge = []
+        
+              
 
         
         self.dates = []
@@ -891,7 +920,9 @@ class plat_orquestrator:
             
             self.update_base_scenario(date)
             self.update_payoff(date)
-            self.update_hedge(date)
+            self.update_hedge()
+
+            cvar_data = self.simulate_cvar_data(date)
 
             path = self.machine_learning_models_dict['MODELS_PATH'] + 'PLAT_MODELS/' + date.strftime('%Y-%m-%d/') 
             
@@ -900,14 +931,33 @@ class plat_orquestrator:
             base_scenario = self.base_scenario_dict['base_scenario']        
             model_prediction_base_scenario = model.predict(base_scenario, batch_size = 1) 
             closed_form_formula_base_scenario = self.contract_data_dict['closed_form_formula'](base_scenario).numpy()[0]
-            npv_hedge_base_scenario = self.hedge.value_basket(base_scenario)[0]
+            npv_hedge_base_scenario = np.array([h.value_basket(base_scenario)[0] for h in self.hedge])
+
+            cvar_scenarios_closed_form = (self.contract_data_dict['closed_form_formula'](cvar_data).numpy() - closed_form_formula_base_scenario).reshape(-1,1)
+
+            # CVar scenarios predicted are only calculated for the sens case. 
+            cvar_scenarios_predicted =  (model.predict(cvar_data, batch_size = cvar_data.shape[0])['y'] - model_prediction_base_scenario['y'] + \
+                    np.sum((cvar_data - base_scenario)*(self.hedge[0].grad.T - model_prediction_base_scenario['sens']), axis = 1)).reshape(-1,1)
             
+            cvar_scenarios_hedge = np.array([h.value_basket(cvar_data) for h in self.hedge]).T - npv_hedge_base_scenario
+
+            cvar_scenarios_closed_form_with_hedge = cvar_scenarios_closed_form + cvar_scenarios_hedge
+            cvar_scenarios_predicted_with_hedge = cvar_scenarios_predicted + cvar_scenarios_hedge
+
+            self.cvar += [Miscellanea.calculate_cvar(cvar_scenarios_closed_form,self.risk_management_dict['cvar_conf_level'])]
+            self.cvar_pred += [Miscellanea.calculate_cvar(cvar_scenarios_predicted,self.risk_management_dict['cvar_conf_level'])]
+            self.cvar_with_hedge += [np.array([Miscellanea.calculate_cvar(cvar_scenarios_closed_form_with_hedge[:,i],self.risk_management_dict['cvar_conf_level']) 
+                                     for i in range(cvar_scenarios_closed_form_with_hedge.shape[1])])]
+            self.cvar_pred_with_hedge += [np.array([Miscellanea.calculate_cvar(cvar_scenarios_predicted_with_hedge[:,i],self.risk_management_dict['cvar_conf_level']) 
+                                     for i in range(cvar_scenarios_predicted_with_hedge.shape[1])])]
+
+             
             next_date = self.hist_data.index[i+1]
             self.update_base_scenario(next_date)
             next_date_scenario = self.base_scenario_dict['base_scenario']
             model_prediction_next_date_scenario = model.predict(next_date_scenario, batch_size = 1) 
             closed_form_formula_next_date_scenario = self.contract_data_dict['closed_form_formula'](next_date_scenario).numpy()[0]
-            npv_hedge_next_date_scenario = self.hedge.value_basket(next_date_scenario)[0]
+            npv_hedge_next_date_scenario = np.array([h.value_basket(next_date_scenario)[0] for h in self.hedge])
 
             self.hpl += [closed_form_formula_next_date_scenario - closed_form_formula_base_scenario]
             self.hpl_with_hedge += [closed_form_formula_next_date_scenario - closed_form_formula_base_scenario + npv_hedge_next_date_scenario - npv_hedge_base_scenario]
@@ -924,10 +974,10 @@ class plat_orquestrator:
                                              npv_hedge_next_date_scenario - npv_hedge_base_scenario]
 
                 self.rtpl_sens += [model_prediction_next_date_scenario['y'][0] - model_prediction_base_scenario['y'][0] +
-                    np.sum((next_date_scenario - base_scenario)*(self.hedge.grad.T - model_prediction_base_scenario['sens']))]
+                    np.sum((next_date_scenario - base_scenario)*(self.hedge[0].grad.T - model_prediction_base_scenario['sens']))]
 
                 self.rtpl_sens_with_hedge += [model_prediction_next_date_scenario['y'][0] - model_prediction_base_scenario['y'][0] +
-                    np.sum((next_date_scenario - base_scenario)*(self.hedge.grad.T - model_prediction_base_scenario['sens'])) +
+                    np.sum((next_date_scenario - base_scenario)*(self.hedge[0].grad.T - model_prediction_base_scenario['sens'])) +
                     npv_hedge_next_date_scenario - npv_hedge_base_scenario]
                 
             elif self.simulation_dict['Simulate_Var_Red_Payoff'] == Enums.Simulate_Var_Red_Payoff.YES:
@@ -941,21 +991,14 @@ class plat_orquestrator:
                                              npv_hedge_next_date_scenario - npv_hedge_base_scenario]
 
                 self.rtpl_sens += [model_prediction_next_date_scenario['y'][0] - model_prediction_base_scenario['y'][0] +
-                    np.sum((next_date_scenario - base_scenario)*(self.hedge.grad.T - model_prediction_base_scenario['sens']))]
+                    np.sum((next_date_scenario - base_scenario)*(self.hedge[0].grad.T - model_prediction_base_scenario['sens']))]
 
                 self.rtpl_sens_with_hedge += [model_prediction_next_date_scenario['y'][0] - model_prediction_base_scenario['y'][0] +
-                    np.sum((next_date_scenario - base_scenario)*(self.hedge.grad.T - model_prediction_base_scenario['sens'])) +
+                    np.sum((next_date_scenario - base_scenario)*(self.hedge[0].grad.T - model_prediction_base_scenario['sens'])) +
                     npv_hedge_next_date_scenario - npv_hedge_base_scenario]
                 
             clear_output()
-                
-        self.hpl_with_hedge = np.array(self.hpl_with_hedge)
-        self.rtpl_naive = np.array(self.rtpl_naive)
-        self.rtpl_naive_with_hedge = np.array(self.rtpl_naive_with_hedge)
-        self.rtpl_npv = np.array(self.rtpl_npv)
-        self.rtpl_npv_with_hedge = np.array(self.rtpl_npv_with_hedge)
-        self.rtpl_sens = np.array(self.rtpl_sens)
-        self.rtpl_sens_with_hedge = np.array(self.rtpl_sens_with_hedge)
+       
 
         self.save_analysis_results(self.machine_learning_models_dict['MODELS_PATH'] + self.machine_learning_models_dict['plat_analysis_subfolder'])
 
@@ -969,11 +1012,24 @@ class plat_orquestrator:
             # Ensure the save directory exists
             Miscellanea.check_and_manage_path(save_path)
 
+            self.hpl_with_hedge = np.array(self.hpl_with_hedge)
+            self.rtpl_naive = np.array(self.rtpl_naive)
+            self.rtpl_naive_with_hedge = np.array(self.rtpl_naive_with_hedge)
+            self.rtpl_npv = np.array(self.rtpl_npv)
+            self.rtpl_npv_with_hedge = np.array(self.rtpl_npv_with_hedge)
+            self.rtpl_sens = np.array(self.rtpl_sens)
+            self.rtpl_sens_with_hedge = np.array(self.rtpl_sens_with_hedge)
+            self.cvar = np.array(self.cvar)
+            self.cvar_pred = np.array(self.cvar_pred)
+            self.cvar_with_hedge = np.array(self.cvar_with_hedge)
+            self.cvar_pred_with_hedge = np.array(self.cvar_pred_with_hedge)
+
             # List of attributes to save using pickle
             pickle_attributes = ['dates']
             # List of numpy array attributes to save
             numpy_attributes = ['hpl', 'hpl_with_hedge', 'rtpl_naive', 'rtpl_naive_with_hedge', 
-                                'rtpl_npv', 'rtpl_npv_with_hedge', 'rtpl_sens', 'rtpl_sens_with_hedge']
+                                'rtpl_npv', 'rtpl_npv_with_hedge', 'rtpl_sens', 'rtpl_sens_with_hedge',
+                                'cvar','cvar_pred', 'cvar_with_hedge','cvar_pred_with_hedge']
 
             # Save attributes using pickle
             for attr in pickle_attributes:
@@ -1001,8 +1057,8 @@ class plat_orquestrator:
         pickle_attributes = ['dates']
         # List of numpy array attributes to load
         numpy_attributes = ['hpl', 'hpl_with_hedge', 'rtpl_naive', 'rtpl_naive_with_hedge', 
-                            'rtpl_npv', 'rtpl_npv_with_hedge', 'rtpl_sens', 'rtpl_sens_with_hedge']
-
+                                'rtpl_npv', 'rtpl_npv_with_hedge', 'rtpl_sens', 'rtpl_sens_with_hedge',
+                                'cvar','cvar_pred', 'cvar_with_hedge','cvar_pred_with_hedge']
         # Load attributes using pickle
         for attr in pickle_attributes:
             with open(os.path.join(load_path, f'{attr}.pkl'), 'rb') as file:

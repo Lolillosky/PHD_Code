@@ -423,34 +423,27 @@ def get_latest_non_empty_subfolder_and_delete_empty(parent_folder):
 
     return latest_non_empty_folder if latest_non_empty_folder else "No non-empty subfolders found."
 
-
 def check_and_manage_path(path):
     """
-    Checks if a specified path exists and manages it based on its content and user input.
+    Checks if a specified path exists and manages it based on its content.
     
-    - If the path does not exist, it prompts the user for creation.
+    - If the path does not exist, it automatically creates it.
     - If the path exists and is empty, does nothing.
     - If the path exists and contains files/directories, it asks the user if they want to delete the content.
-    - Forces an error if the user does not approve creation or deletion when prompted.
+    - Forces an error if the user does not approve deletion when prompted.
     
     Parameters:
     path (str): The filesystem path to check and manage.
     
     Raises:
-    ValueError: If the user declines creation of the path or deletion of its contents.
+    ValueError: If the user declines deletion of its contents.
     """
     
     # Check if the specified path exists
     if not os.path.exists(path):
-        # Prompt the user for creation if the path does not exist
-        create = input(f"The path {path} does not exist. Do you want to create it? (y/n): ").strip().lower()
-        if create == 'y':
-            # Create the path as per user approval
-            os.makedirs(path)
-            print(f"Path created: {path}")
-        else:
-            # Raise an error if the user declines to create the path
-            raise ValueError("Creation of the path was not approved. Exiting.")
+        # Create the path automatically if it does not exist
+        os.makedirs(path)
+        print(f"Path created: {path}")
     else:
         # If the path exists, check if it is empty
         if os.listdir(path):
@@ -468,11 +461,142 @@ def check_and_manage_path(path):
             # If the path is empty, there's nothing to do
             print("The path exists and is empty. Nothing to do.")
 
-# Example usage:
-# Replace "your/path/here" with the actual path you wish to check and manage.
-# path = "your/path/here"
-# check_and_manage_path(path)
+
+def plot_plat_statistics_with_zones(dates, rolling_ks_stat, rolling_rank_corr, path_file_name=None):
+#     plt.figure(figsize=(12, 7))
+
+    # Plot the KS statistic and rank correlation with labels
+    plt.plot(dates, rolling_ks_stat, label='Rolling KS Statistic', color='blue')
+    plt.plot(dates, rolling_rank_corr, label='Rolling Rank Correlation', color='green')
+
+    # Define zone conditions
+    green_zone_condition = (rolling_rank_corr > 0.8) & (rolling_ks_stat < 0.09)
+    red_zone_condition = (rolling_rank_corr < 0.7) | (rolling_ks_stat > 0.12)
+
+    # Initialize counters for each zone
+    green_zone_count = 0
+    red_zone_count = 0
+    yellow_zone_count = 0
+
+    # Fill background colors based on conditions and count zones
+    for i in range(len(dates) - 1):
+        if green_zone_condition[i]:
+            color = 'green'
+            green_zone_count += 1
+        elif red_zone_condition[i]:
+            color = 'red'
+            red_zone_count += 1
+        else:
+            color = 'yellow'
+            yellow_zone_count += 1
+        plt.fill_between(dates[i:i + 2], 0, 1, color=color, alpha=0.3, step='pre', edgecolor=None)
+
+    # Add critical level lines with labels
+    plt.axhline(y=0.09, color='yellow', linestyle='--')
+    plt.axhline(y=0.12, color='red', linestyle='-')
+    plt.axhline(y=0.7, color='red', linestyle='-')
+    plt.axhline(y=0.8, color='yellow', linestyle='--')
+
+    # Customize the plot
+    plt.title('Rolling KS Statistic and Rank Correlation Over Time')
+    plt.xlabel('Date')
+    plt.ylabel('Statistic Value')
+    plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.20), ncol=3)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    # Calculate percentages
+    total_days = len(dates) - 1  # Minus one because the loop counts intervals between dates
+    green_percent = (green_zone_count / total_days) * 100
+    red_percent = (red_zone_count / total_days) * 100
+    yellow_percent = (yellow_zone_count / total_days) * 100
+
+    # Display percentages on the plot
+    plt.text(0.5, 0.5, f"Green Zone: {green_percent:.2f}%\nYellow Zone: {yellow_percent:.2f}%\nRed Zone: {red_percent:.2f}%", transform=plt.gca().transAxes, verticalalignment='center')
+
+    plt.show()
+
+    if path_file_name is not None:
+        plt.savefig(path_file_name)
 
 
+def compute_rolling_plat_statistic(hpl, rtpl, window):
+    
+    ks = []
+    rc = []
+    for i in range(len(hpl) - window):
+        
+        ks_stat, _ = ks_2samp(hpl[i:i+window], rtpl[i:i+window])
+        rank_corr = spearmanr(hpl[i:i+window], rtpl[i:i+window])[0]
+        
+        ks += [ks_stat]
+        rc += [rank_corr]
+        
+        
+    return np.array(ks), np.array(rc)
 
+def calculate_cvar(returns, confidence_level):
+    """
+    Calculate the Conditional Value at Risk (CVaR) at a specific confidence level.
 
+    Parameters:
+    - returns: array-like, the list of returns (or losses) for the investment.
+    - confidence_level: float, the confidence level (e.g., 0.95 for 95%).
+
+    Returns:
+    - cvar: float, the calculated Conditional Value at Risk.
+    """
+    # Sort the returns in ascending order
+    sorted_returns = np.sort(returns.flatten())
+
+    # Calculate the Value at Risk (VaR) at the given confidence level
+    var_index = int(np.ceil((1 - confidence_level) * len(sorted_returns))) - 1
+    var = sorted_returns[var_index]
+
+    # Calculate the CVaR as the average of the losses worse than the VaR
+    cvar = sorted_returns[:var_index + 1].mean()
+
+    return cvar   
+
+def plat_cvar_scatter(rolling_ks_stat, rolling_rank_corr, cvar, path_file_name=None):
+    # Assume the first part of your function remains the same
+    
+    # New figure for scatter plots
+    plt.figure(figsize=(14, 6))
+    
+    # Convert lists to numpy arrays for efficient element-wise operations
+    cvar = np.array(cvar)
+    rolling_ks_stat = np.array(rolling_ks_stat)
+    rolling_rank_corr = np.array(rolling_rank_corr)
+    
+    # Define zone conditions
+    green_zone_condition = (rolling_rank_corr > 0.8) & (rolling_ks_stat < 0.09)
+    red_zone_condition = (rolling_rank_corr < 0.7) | (rolling_ks_stat > 0.12)
+    yellow_zone_condition = ~(green_zone_condition | red_zone_condition)  # Not green and not red
+    
+    # Subplot 1: CVaR vs KS Statistic
+    plt.subplot(1, 2, 1)
+    plt.scatter(cvar[green_zone_condition], rolling_ks_stat[green_zone_condition], color='green', label='Green Zone')
+    plt.scatter(cvar[yellow_zone_condition], rolling_ks_stat[yellow_zone_condition], color='yellow', label='Yellow Zone')
+    plt.scatter(cvar[red_zone_condition], rolling_ks_stat[red_zone_condition], color='red', label='Red Zone')
+    plt.title('CVaR vs KS Statistic')
+    plt.xlabel('CVaR')
+    plt.ylabel('KS Statistic')
+    plt.legend()
+    
+    # Subplot 2: CVaR vs Rank Correlation
+    plt.subplot(1, 2, 2)
+    plt.scatter(cvar[green_zone_condition], rolling_rank_corr[green_zone_condition], color='green', label='Green Zone')
+    plt.scatter(cvar[yellow_zone_condition], rolling_rank_corr[yellow_zone_condition], color='yellow', label='Yellow Zone')
+    plt.scatter(cvar[red_zone_condition], rolling_rank_corr[red_zone_condition], color='red', label='Red Zone')
+    plt.title('CVaR vs Rank Correlation')
+    plt.xlabel('CVaR')
+    plt.ylabel('Rank Correlation')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+    # Save the figure if a filename is provided
+    if path_file_name is not None:
+        plt.savefig(path_file_name)
