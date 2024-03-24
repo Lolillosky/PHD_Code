@@ -10,6 +10,7 @@ import copy
 from plotly.subplots import make_subplots
 import datetime
 import re
+import pandas as pd
   
 
 def plot_schocks(number_risk_factors, list_of_shocks, risk_factor_names, bins):
@@ -125,51 +126,62 @@ def shuffle_arrays_in_dict(my_dict, random_state=None):
 
 
 
-def plot_plat_charts(hpl, rtpl, fig_ax_list = None, fig_tittle = ''):
+def plot_plat_charts(hpl, rtpl, fig_tittle = ''):
     """
-    Plots comparison charts for given HPL 
-    and RTPL data.
+    Plots comparison charts for given HPL and RTPL data.
     Both cum probability and rank correlation plots.
     
     Parameters:
     - hpl: List or array of HPL data.
     - rtpl: List or array of RTPL data.
-    - fig_tittle: Tittle of the whole figure
-
+    - fig_tittle: Title of the whole figure
     
     Returns:
-    - fig: A Matplotlib figure containing two subplots.
+    - combined_fig: A Matplotlib figure containing two subplots.
+    - fig_cum_prob: A Matplotlib figure for the cumulative probability plot.
+    - fig_rank_corr: A Matplotlib figure for the rank correlation plot.
     """
     
-    if fig_ax_list is None:
-        # Create a new figure with two subplots side by side
-        fig, ax = plt.subplots(1, 2)
-    else:
-        fig = fig_ax_list[0]
-        ax = fig_ax_list[1]
-        
-    # First subplot: Cumulative histogram for HPL and RTPL
-    ax[0].hist([hpl, rtpl], density=True, histtype="step", cumulative=True, 
-               bins=np.unique(np.sort(hpl)), 
-               label=['HPL', 'RTPL'])
-    ax[0].legend(loc='upper left')
-    ax[0].set_xlabel('PL')
-    ax[0].set_ylabel('Cumulative Probability')
-    
-    ax[0].set_title('KS statistic: ' + format(ks_2samp(hpl, rtpl)[0], '0.4f'))
+    # Create figures
+    combined_fig, ax_combined = plt.subplots(1, 2)
+    fig_cum_prob, ax_cum_prob = plt.subplots()
+    fig_rank_corr, ax_rank_corr = plt.subplots()
 
-    # Second subplot: Scatter plot of ranked HPL versus RTPL
-    ax[1].plot(rankdata(hpl), rankdata(rtpl), '.')
-    ax[1].set_xlabel('HPL Rank')
-    ax[1].set_ylabel('RTPL Rank')
-    
-    ax[1].set_title('Rank Correlation: ' +  format(spearmanr(hpl, rtpl)[0], '0.4f'))
+    # Cumulative probability plot for HPL and RTPL
+    ax_cum_prob.hist([hpl, rtpl], density=True, histtype="step", cumulative=True, 
+                     bins=np.unique(np.sort(hpl)), 
+                     label=['HPL', 'RTPL'])
+    ax_cum_prob.legend(loc='upper left')
+    ax_cum_prob.set_xlabel('PL')
+    ax_cum_prob.set_ylabel('Cumulative Probability')
+    ax_cum_prob.set_title('Cumulative Probability')
+
+    # Rank correlation plot for HPL versus RTPL
+    ax_rank_corr.plot(rankdata(hpl), rankdata(rtpl), '.')
+    ax_rank_corr.set_xlabel('HPL Rank')
+    ax_rank_corr.set_ylabel('RTPL Rank')
+    ax_rank_corr.set_title('Rank Correlation')
+
+    # Populate combined figure with plots
+    ax_combined[0].hist([hpl, rtpl], density=True, histtype="step", cumulative=True, 
+                        bins=np.unique(np.sort(hpl)), 
+                        label=['HPL', 'RTPL'])
+    ax_combined[0].legend(loc='upper left')
+    ax_combined[0].set_xlabel('PL')
+    ax_combined[0].set_ylabel('Cumulative Probability')
+    ax_combined[0].set_title('KS statistic: ' + format(ks_2samp(hpl, rtpl)[0], '0.4f'))
+
+    ax_combined[1].plot(rankdata(hpl), rankdata(rtpl), '.')
+    ax_combined[1].set_xlabel('HPL Rank')
+    ax_combined[1].set_ylabel('RTPL Rank')
+    ax_combined[1].set_title('Rank Correlation: ' + format(spearmanr(hpl, rtpl)[0], '0.4f'))
+
     # Set figure size
-    fig.set_size_inches(13, 5)
-    
-    fig.suptitle(fig_tittle)
-    # Return the figure object
-    return fig
+    combined_fig.set_size_inches(13, 5)
+    combined_fig.suptitle(fig_tittle)
+
+    # Return the figure objects
+    return combined_fig, fig_cum_prob, fig_rank_corr
 
 
 def plot_points_predict(simul_results,XY_labels ,save_path_file=None):
@@ -296,27 +308,37 @@ def deep_copy_dict_with_arrays(original_dict):
     return copied_dict
 
 
-def plot_plat_training(plat_results_list, plat_names_list, path_file_name = None):
+def plot_plat_training(plat_results_list, plat_names_list, path_file_name=None):
     
-    f, ax = plt.subplots(1,2, figsize = (10,4))
+    f, ax = plt.subplots(1, 2, figsize=(10, 4))
     
     for plat_result, plat_name in zip(plat_results_list, plat_names_list):
     
-        ax[0].plot(plat_result['batch_count'], plat_result['ks_stat'], '.-',label = plat_name)
-        ax[1].plot(plat_result['batch_count'], plat_result['rank_corr'], '.-', label = plat_name)
+        ax[0].plot(plat_result['batch_count'], plat_result['ks_stat'], '.-', label=plat_name)
+        ax[1].plot(plat_result['batch_count'], plat_result['rank_corr'], '.-', label=plat_name)
         
     ax[0].legend()
     ax[1].legend()
     
-    ax[1].axhline(y = 0.80, color = 'yellow', linestyle = ':')
-    ax[1].axhline(y = 0.70, color = 'red', linestyle = ':')
+    ax[1].axhline(y=0.80, color='yellow', linestyle=':')
+    ax[1].axhline(y=0.70, color='red', linestyle=':')
     
-    ax[0].axhline(y = 0.09, color = 'yellow', linestyle = ':')
-    ax[0].axhline(y = 0.12, color = 'red', linestyle = ':')
+    ax[0].axhline(y=0.09, color='yellow', linestyle=':')
+    ax[0].axhline(y=0.12, color='red', linestyle=':')
+
+    # Set titles for the subplots
+    ax[0].set_title("KS Statistic")
+    ax[1].set_title("Rank Correlation")
+    
+    # Set axis labels
+    ax[0].set_xlabel("Number of minibatches")
+    ax[1].set_xlabel("Number of minibatches")
+    ax[0].set_ylabel("Statistic")
+    ax[1].set_ylabel("Statistic")
     
     if path_file_name is not None:
-        
         plt.savefig(path_file_name)
+    
     
 
 def plot_plat_training_plotly(plat_results_list, plat_names_list, path_file_name_html=None,path_file_name_pdf = None):
@@ -600,3 +622,37 @@ def plat_cvar_scatter(rolling_ks_stat, rolling_rank_corr, cvar, path_file_name=N
     # Save the figure if a filename is provided
     if path_file_name is not None:
         plt.savefig(path_file_name)
+
+
+def summarize_ongoing_plat_statistics(plat_model, hedge_range):
+
+    rolling_ks_stat, rolling_rank_corr  =  compute_rolling_plat_statistic(plat_model.hpl, plat_model.rtpl_sens, 250)
+
+    green_zone_condition = (rolling_rank_corr > 0.8) & (rolling_ks_stat < 0.09)
+    red_zone_condition = (rolling_rank_corr < 0.7) | (rolling_ks_stat > 0.12)
+
+    avg_green = [np.mean(green_zone_condition)]
+    avg_red = [np.mean(red_zone_condition)]
+    avg_yellow = [1.0 - avg_green[0] - avg_red[0]]
+
+    avg_cvar = [np.mean(plat_model.cvar)]
+
+    for i in hedge_range:
+
+        rolling_ks_stat, rolling_rank_corr  =  compute_rolling_plat_statistic(plat_model.hpl_with_hedge[:,i], plat_model.rtpl_sens_with_hedge[:,i], 250)
+
+        green_zone_condition = (rolling_rank_corr > 0.8) & (rolling_ks_stat < 0.09)
+        red_zone_condition = (rolling_rank_corr < 0.7) | (rolling_ks_stat > 0.12)
+
+        avg_green += [np.mean(green_zone_condition)]
+        avg_red += [np.mean(red_zone_condition)]
+        avg_yellow += [1.0 - avg_green[-1] - avg_red[-1]]
+
+        avg_cvar += [np.mean(plat_model.cvar_with_hedge[:,i])]
+
+    data = np.concatenate([np.array(avg_cvar).reshape(1,-1),np.array(avg_green).reshape(1,-1), np.array(avg_yellow).reshape(1,-1), np.array(avg_red).reshape(1,-1)], axis = 0)
+
+    df = pd.DataFrame(data = data, columns = ['Unhedged', 'Delta Hedged', 'Delta + 1 vega Hedged', 'Delta + 2 vega Hedged', 'Delta + 3 vega Hedged'], 
+                          index = ['Avg CVaR', '% Green','% Yellow','% Red' ])
+
+    return df
