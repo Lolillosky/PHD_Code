@@ -845,7 +845,7 @@ class plat_orquestrator:
 
     def train_models_for_all_dates(self):
         
-        Miscellanea.check_and_manage_path(self.machine_learning_models_dict['MODELS_PATH'])
+        Miscellanea.check_and_manage_path(self.machine_learning_models_dict['MODELS_PATH'] + 'PLAT_MODELS/')
 
         index_begin_date = self.hist_data.index.get_indexer([self.init_and_maturity_dates[0]])[0]
         
