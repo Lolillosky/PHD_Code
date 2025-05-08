@@ -484,8 +484,8 @@ def check_and_manage_path(path):
             print("The path exists and is empty. Nothing to do.")
 
 
-def plot_plat_statistics_with_zones(dates, rolling_ks_stat, rolling_rank_corr, path_file_name=None):
-#     plt.figure(figsize=(12, 7))
+def plot_plat_statistics_with_zones(dates, rolling_ks_stat, rolling_rank_corr, path_file_name=None, title= False, legend = False):
+    plt.figure(figsize=(10, 3))
 
     # Plot the KS statistic and rank correlation with labels
     plt.plot(dates, rolling_ks_stat, label='Rolling KS Statistic', color='blue')
@@ -520,10 +520,12 @@ def plot_plat_statistics_with_zones(dates, rolling_ks_stat, rolling_rank_corr, p
     plt.axhline(y=0.8, color='yellow', linestyle='--')
 
     # Customize the plot
-    plt.title('Rolling KS Statistic and Rank Correlation Over Time')
-    plt.xlabel('Date')
+    if title:
+        plt.title('Rolling KS Statistic and Rank Correlation Over Time')
+    # plt.xlabel('Date')
     plt.ylabel('Statistic Value')
-    plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.20), ncol=3)
+    if legend:
+        plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.20), ncol=3)
     plt.xticks(rotation=45)
     plt.tight_layout()
 
@@ -536,10 +538,12 @@ def plot_plat_statistics_with_zones(dates, rolling_ks_stat, rolling_rank_corr, p
     # Display percentages on the plot
     plt.text(0.5, 0.5, f"Green Zone: {green_percent:.2f}%\nYellow Zone: {yellow_percent:.2f}%\nRed Zone: {red_percent:.2f}%", transform=plt.gca().transAxes, verticalalignment='center')
 
-    plt.show()
+   
 
     if path_file_name is not None:
         plt.savefig(path_file_name)
+
+    plt.show()
 
 
 def compute_rolling_plat_statistic(hpl, rtpl, window):
@@ -617,12 +621,13 @@ def plat_cvar_scatter(rolling_ks_stat, rolling_rank_corr, cvar, path_file_name=N
     plt.legend()
     
     plt.tight_layout()
-    plt.show()
+    
 
     # Save the figure if a filename is provided
     if path_file_name is not None:
         plt.savefig(path_file_name)
 
+    plt.show()
 
 def summarize_ongoing_plat_statistics(plat_model, hedge_range):
 
